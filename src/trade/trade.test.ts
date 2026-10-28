@@ -51,6 +51,45 @@ test("strict inputs and explicit owner; no coercion, rounding, Arena or mainnet"
   assert.throws(() => parseArgs(baseArgs.map((s) => s === "100000" ? "30000001" : s)));
   assert.equal(decimal("1.25", 2), 125n);
 });
+test("CLI accepts BTC prices and quantities without assuming token decimals", () => {
+  const args = [...baseArgs];
+  args[args.indexOf("--price") + 1] = "81093.8";
+  args[args.indexOf("--qty") + 1] = "2.5";
+  const o = parseArgs(args);
+  assert.equal(o.price, "81093.8");
+  assert.equal(o.qty, "2.5");
+  assert.equal(decimal(o.price, 18), 810938n * 10n ** 17n);
+  assert.equal(decimal(o.qty, 8), 250000000n);
+});
+test("CLI rejects malformed and zero quantity or price before RPC reads", () => {
+  for (const flag of ["--qty", "--price"]) for (const value of ["0", "0.000", "-1", "+1", "1e2", ".1", "1.", "01", " 1", "1x", "NaN", "9".repeat(81)]) {
+    const args = [...baseArgs];
+    args[args.indexOf(flag) + 1] = value;
+    assert.throws(() => parseArgs(args));
+  }
+});
+test("uint256 bounds apply at actual token decimals without rounding", () => {
+  const max = 2n ** 256n - 1n;
+  assert.equal(decimal(max.toString(), 0), max);
+  assert.throws(() => decimal((max + 1n).toString(), 0), /uint256/);
+  const whole = max / 10n ** 18n;
+  assert.equal(decimal(whole.toString(), 18), whole * 10n ** 18n);
+  assert.throws(() => decimal((whole + 1n).toString(), 18), /uint256/);
+  assert.throws(() => decimal("1.0000000000000000001", 18), /precision/);
+});
+test("production preflight enforces actual precision and range after CLI parsing", async () => {
+  for (const [flag, value, error] of [
+    ["--qty", "0.001", /precision/],
+    ["--price", "1.0000000000000000001", /precision/],
+    ["--price", "1" + "0".repeat(60), /uint256/],
+  ] as const) {
+    const args = [...baseArgs];
+    args[args.indexOf(flag) + 1] = value;
+    const o = parseArgs(args);
+    const f = readerFixture(owner, operator, pool);
+    await assert.rejects(preflight(f.rpc, o), error);
+  }
+});
 test("official delegated selectors", () => {
   assert.equal(toFunctionSelector("placeOrderFor(address,bool,uint64,uint256,uint256,uint64,uint8,uint8,address,uint96)"), PLACE_SELECTOR);
   assert.equal(toFunctionSelector("cancelOrderFor(address,uint128)"), CANCEL_SELECTOR);

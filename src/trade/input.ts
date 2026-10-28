@@ -14,8 +14,11 @@ export function address(text: string): Address {
   requireSafe(value !== zeroAddress && value.toLowerCase() !== ARENA, "Zero/Arena address forbidden");
   return value;
 }
+function positiveDecimal(text: string): void {
+  requireSafe(text.length <= 80 && /^(0|[1-9]\d*)(\.\d+)?$/.test(text) && /[1-9]/.test(text), "Use a positive plain decimal");
+}
 export function decimal(text: string, decimals: number): bigint {
-  requireSafe(text.length <= 80 && /^(0|[1-9]\d*)(\.\d+)?$/.test(text), "Use a positive plain decimal");
+  positiveDecimal(text);
   requireSafe((text.split(".")[1]?.length ?? 0) <= decimals, "Excess decimal precision; no rounding allowed");
   const value = parseUnits(text, decimals);
   requireSafe(value > 0n && value < 2n ** 256n, "Amount outside positive uint256 range");
@@ -50,7 +53,7 @@ export function parseArgs(args: string[]): Options {
   requireSafe(!execute || found.has("env-file"), "Execute requires explicit --env-file");
   if (execute) requireSafe(isAbsolute(need("env-file")) && basename(need("env-file")) === ".env", "Signer filename must be exactly .env under an explicit absolute path");
   const qty = need("qty"), price = need("price");
-  decimal(qty, 77); decimal(price, 77);
+  positiveDecimal(qty); positiveDecimal(price);
   const out: Options = {
     owner: address(need("owner")), pool: address(need("pool")), side, qty, price, gas,
     maxGasSpend: decimal(need("max-gas-spend"), 18), execute, close: found.has("close"),
