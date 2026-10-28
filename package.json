@@ -9,6 +9,8 @@
     "backtest": "tsx src/bin/backtest.ts",
     "preflight": "tsx src/bin/preflight.ts",
     "validate": "tsx src/bin/validate.ts",
+    "trade": "tsx src/bin/trade.ts",
+    "test:trade": "tsx --test src/trade/*.test.ts",
     "test:units": "tsx --test src/units.test.ts",
     "typecheck": "tsc --noEmit"
   },
