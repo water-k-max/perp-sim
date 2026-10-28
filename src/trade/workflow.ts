@@ -29,7 +29,7 @@ export interface Ports {
   output(value: unknown): void;
 }
 export function confirmation(o: Options, operator: Address, s: Snapshot, gasPrice: bigint): string {
-  return `CONFIRM ${JSON.stringify({ chain: CHAIN_ID, owner: o.owner, operator, pool: o.pool, action: o.close ? "close" : "open", side: o.side, qty: o.qty, quantityRaw: String(s.quantity), absoluteLimitPrice: o.price, priceRaw: String(s.price), startingSignedPosition: String(s.position), order: "IOC", gas: String(o.gas), gasPriceWei: String(gasPrice), maxGasSpendWei: String(o.maxGasSpend), cleanup: "NONE; this single IOC only; any remaining exposure requires a separately confirmed close" })}`;
+  return `CONFIRM ${JSON.stringify({ chain: CHAIN_ID, owner: o.owner, operator, pool: o.pool, action: o.close ? "close" : "open", side: o.side, qty: o.qty, quantityRaw: String(s.quantity), absoluteLimitPrice: o.price, priceRaw: String(s.price), startingSignedPosition: String(s.position), order: "IOC", gas: String(o.gas), gasPriceWei: String(gasPrice), maxGasSpendWei: String(o.maxGasSpend), cleanup: "NONE; this single IOC only; any remaining exposure requires a separately confirmed close", acknowledgment: "I acknowledge: no simultaneous owner trading, signer nonce use, grant changes or stop changes outside this process while this intent executes" })}`;
 }
 export async function runTrade(o: Options, p: Ports, journal: Journal): Promise<void> {
   requireSafe(await p.chainId() === CHAIN_ID, "HTTP eth_chainId is not Hideki 50383");

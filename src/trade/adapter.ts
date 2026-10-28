@@ -26,7 +26,7 @@ export const stateAbi = parseAbi([
   "function getOwnOpenOrders() view returns (uint128[])",
   "function getStopOrderRegistry(address perpPool) view returns (address stopOrderRegistry)",
 ]);
-const stopTriggerSafety = "No currently authorized registry triggers at the checked block; pending stops may exist. No guarantee beyond that block; concurrent changes remain prohibited by user confirmation. No grants or stops changed.";
+const stopTriggerSafety = "No currently authorized registry triggers at the checked block; pending stops may exist. No guarantee beyond that block; execution requires explicit acknowledgment of no simultaneous owner trading, signer nonce use, grant changes or stop changes outside this process. No grants or stops changed.";
 export async function assertStopsCannotExecute(rpc: Pick<PublicClient, "readContract">, pool: Address, bank: Address, owner: Address, blockNumber: bigint): Promise<bigint[]> {
   const system = await rpc.readContract({ address: bank, abi: stateAbi, functionName: "getSystemConfig", blockNumber });
   requireSafe(system.perpPoolFactory !== zeroAddress, "Cannot establish stop registry factory");
@@ -68,7 +68,7 @@ export async function preflight(rpc: PublicClient, o: Options, operator: Address
   requireSafe(orders.length === 0, "Owner has existing orders on selected pool");
   requireSafe(cfg.lotSize > 0n && cfg.tickSize > 0n, "Invalid market grid");
   requireSafe(quantity % cfg.lotSize === 0n && price % cfg.tickSize === 0n, "Quantity/price must exactly match grid");
-  requireSafe(quantity >= cfg.minQuantity && quantity <= cfg.maxPositionSize, "Quantity outside min/max bounds");
+  requireSafe(quantity >= cfg.minQuantity && (o.close || quantity <= cfg.maxPositionSize), "Quantity outside min/max bounds");
   if (o.close) {
     requireSafe(position.size !== 0n, "No position to close");
     requireSafe((position.size > 0n ? "short" : "long") === o.side && quantity === (position.size < 0n ? -position.size : position.size), "Close must oppose and exactly match fresh signed position");

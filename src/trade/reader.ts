@@ -62,13 +62,15 @@ export async function readPlacement(rpc: Pick<PublicClient, "readContract">, poo
   requireSafe(same(marginBank, deployment.marginBank), "Unexpected margin bank");
   const bank = { address: marginBank, abi: tradeReadAbi, blockNumber } as const;
   const system = await rpc.readContract({ ...bank, functionName: "getSystemConfig" });
-  requireSafe(same(system.marginBank, marginBank) && same(system.collateralToken, deployment.collateral) && same(system.perpPoolFactory, deployment.perpPoolFactory) && system.fullyWired, "Unexpected margin bank/collateral/factory or unwired system");
+  // SDK deployment.collateral identifies binary tUSDC, not perpetual USDso.
+  requireSafe(same(system.marginBank, marginBank) && same(system.collateralToken, "0xed7993A74dAe1e6656B704A424DcD8711aAf4F72") && same(system.perpPoolFactory, deployment.perpPoolFactory) && system.fullyWired, "Unexpected margin bank/collateral/factory or unwired system");
   const [deployed, registered, quoteDecimals] = await Promise.all([
     rpc.readContract({ address: system.perpPoolFactory, abi: tradeReadAbi, blockNumber, functionName: "isDeployedByFactory", args: [poolAddress] }),
     rpc.readContract({ ...bank, functionName: "isPerpPoolRegistered", args: [poolAddress] }),
     rpc.readContract({ address: system.collateralToken, abi: tradeReadAbi, blockNumber, functionName: "decimals" }),
   ]);
   requireSafe(deployed && registered, "Pool not deployed/registered");
+  requireSafe(quoteDecimals === 18, "Unexpected USDso collateral decimals");
   const [ok, snap] = await rpc.readContract({ ...pool, functionName: "tryGetHealthSnapshot" });
   requireSafe(ok && snap.markPrice > 0n && snap.oneBase > 0n, "Actual owner margin preview unpriceable");
   const baseDecimals = snap.oneBase.toString().length - 1;

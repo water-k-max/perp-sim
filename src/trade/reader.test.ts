@@ -39,7 +39,7 @@ test("fresh HTTP mark above cap rejects even with passing stale SDK/indexer meta
     listPerpMarkets: async () => { throw Error("Indexer must never be consulted"); },
     previewPerpOrderMargin: async () => { throw Error("SDK WS must never be consulted"); },
   });
-  f.values.tryGetHealthSnapshot[1].markPrice = 2600n;
+  f.values.tryGetHealthSnapshot[1].markPrice = 26n * 10n ** 18n;
   await assert.rejects(preflight(f.rpc, options(), operator), /notional exceeds/);
 });
 for (const field of ["bank", "collateral", "factory", "registration", "deployed", "oneBase", "grid", "risk", "cross-health", "voucher", "leverage", "isolation", "restriction"] as const) test(`onchain ${field} cannot be overridden by stale metadata`, async () => {
@@ -60,12 +60,33 @@ for (const field of ["bank", "collateral", "factory", "registration", "deployed"
   await assert.rejects(preflight(f.rpc, options(), operator));
 });
 
+test("production reader accepts pinned USDso with 18 decimals", async () => {
+  const f = readerFixture(owner, operator, pool);
+  const r = await readPlacement(f.rpc, pool, owner, 5n);
+  assert.equal(r.cfg.quoteDecimals, 18);
+  assert.equal(f.calls.find(c => c.functionName === "decimals")?.address, "0xed7993A74dAe1e6656B704A424DcD8711aAf4F72");
+});
+for (const collateral of ["0x9E9492cC533E8696A3b6afC7df730800DF75148f", owner]) test(`production reader rejects collateral ${collateral}`, async () => {
+  const f = readerFixture(owner, operator, pool);
+  f.values.getSystemConfig.collateralToken = collateral;
+  await assert.rejects(readPlacement(f.rpc, pool, owner, 5n), /Unexpected margin bank\/collateral\/factory/);
+  assert.equal(f.calls.some(c => c.functionName === "decimals"), false);
+});
+for (const decimals of [0, 6, 17, 19]) test(`production reader rejects USDso decimals ${decimals}`, async () => {
+  const f = readerFixture(owner, operator, pool);
+  f.values.decimals = decimals;
+  await assert.rejects(readPlacement(f.rpc, pool, owner, 5n), /Unexpected USDso collateral decimals/);
+  assert.equal(f.calls.some(c => c.functionName === "tryGetHealthSnapshot"), false);
+});
+
 test("no-autoPull max agrees with exhaustive SDK pure quotes on lot grid", async () => {
   for (const position of [0n, 100n, -100n]) for (const bid of [true, false]) {
     const f = readerFixture(owner, operator, pool);
     f.values.getPosition.size = position; f.values.getReducingCapacity.positionSize = position;
     f.values.getReducingCapacity.effectiveReducingCapacity = position < 0n ? -position : position;
     f.values.getPerpPoolParameters.maxPositionSize = 200n;
+    f.values.tryGetHealthSnapshot[1].markPrice = 100n;
+    f.values.getPosition.avgEntryPrice = 100n;
     f.values.getAccountState.unlockedCollateralBalance = 12n;
     f.values.getAccountHealth = [100n, 0n, 0n, 0n];
     f.values.getOrderBookParameters.lotSize = 5n;
@@ -108,7 +129,7 @@ for (const reorgAt of [1, 2, Infinity]) test(`simulation canonical checks ${reor
         assert.equal(req.params[0].to.toLowerCase(), pool.toLowerCase());
         const decoded = decodeFunctionData({ abi: operatorAbi, data: req.params[0].data });
         assert.equal(decoded.functionName, "placeOrderFor");
-        assert.deepEqual(decoded.args, [owner, true, 0n, 100n, 100n, 1120n * 1_000_000_000n, ORDER_TYPE.MARKET, SELF_MATCHING_OPTION.CANCEL_TAKER, zeroAddress, 0n]);
+        assert.deepEqual(decoded.args, [owner, true, 0n, 10n ** 18n, 100n, 1120n * 1_000_000_000n, ORDER_TYPE.MARKET, SELF_MATCHING_OPTION.CANCEL_TAKER, zeroAddress, 0n]);
         result = encodeFunctionResult({ abi: operatorAbi, functionName: "placeOrderFor", result: [true, 1n] });
       }
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: req.id, result }), { headers: { "Content-Type": "application/json" } });

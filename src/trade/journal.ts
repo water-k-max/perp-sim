@@ -1,13 +1,16 @@
 import { mkdirSync, openSync, closeSync, writeFileSync, fsyncSync, renameSync, existsSync, unlinkSync, rmdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { requireSafe } from "./input.js";
 
 export const json = (value: unknown): string => JSON.stringify(value, (_, v) => typeof v === "bigint" ? v.toString() : v, 2);
 export class Journal {
   private held = false;
   private pending = false;
-  constructor(readonly directory: string) {}
-  private syncDir() { const fd = openSync(this.directory, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } }
+  constructor(readonly directory: string, private readonly directoryIO = { openSync, fsyncSync, closeSync }) {}
+  private syncDir(directory = this.directory) {
+    const fd = this.directoryIO.openSync(directory, "r");
+    try { this.directoryIO.fsyncSync(fd); } finally { this.directoryIO.closeSync(fd); }
+  }
   private save(name: string, value: unknown) {
     const path = join(this.directory, name);
     const fd = openSync(`${path}.new`, "w", 0o600);
@@ -15,7 +18,15 @@ export class Journal {
     renameSync(`${path}.new`, path); this.syncDir();
   }
   acquire() {
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    const firstCreated = mkdirSync(resolve(this.directory), { recursive: true, mode: 0o700 });
+    if (firstCreated !== undefined) {
+      // Persist new directory entries through the first preexisting ancestor.
+      const ancestor = dirname(resolve(firstCreated));
+      for (let directory = resolve(this.directory); ; directory = dirname(directory)) {
+        this.syncDir(directory);
+        if (directory === ancestor) break;
+      }
+    }
     requireSafe(!existsSync(join(this.directory, "pending.json")), "Unresolved journal: resolve recorded hash/nonce before any fresh send");
     try { mkdirSync(join(this.directory, "lock"), { mode: 0o700 }); } catch { throw new Error("Trade lock exists"); }
     this.held = true;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync, openSync, fsyncSync, closeSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeAbiParameters, encodeEventTopics, keccak256, toFunctionSelector, type TransactionReceipt } from "viem";
@@ -10,7 +10,7 @@ import { readerFixture } from "./reader.fixture.js";
 import { address, ARENA, decimal, parseArgs, type Options } from "./input.js";
 import { Journal } from "./journal.js";
 import { runTrade, type Ports, type Snapshot } from "./workflow.js";
-import { preflight as checkedPreflight, assertStopsCannotExecute, receiptState, PLACE_SELECTOR, CANCEL_SELECTOR } from "./adapter.js";
+import { preflight as checkedPreflight, createPorts, assertStopsCannotExecute, receiptState, PLACE_SELECTOR, CANCEL_SELECTOR } from "./adapter.js";
 const preflight = (rpc: Parameters<typeof checkedPreflight>[0], o: Options) => checkedPreflight(rpc, o, operator);
 
 const owner = address("0x1111111111111111111111111111111111111111");
@@ -108,7 +108,9 @@ test("confirmation names complete intent; fresh changed position blocks send", a
     confirm: async (intent) => {
       const parsed = JSON.parse(intent.slice("CONFIRM ".length));
       for (const key of ["owner", "operator", "pool", "side", "qty", "absoluteLimitPrice", "chain", "gas", "gasPriceWei", "maxGasSpendWei", "cleanup"]) assert.ok(key in parsed);
-      assert.match(parsed.cleanup, /NONE/); return intent;
+      assert.match(parsed.cleanup, /NONE/);
+      assert.equal(parsed.acknowledgment, "I acknowledge: no simultaneous owner trading, signer nonce use, grant changes or stop changes outside this process while this intent executes");
+      return intent;
     },
   });
   await assert.rejects(runTrade(execution(), f.ports, f.journal), /changed/);
@@ -177,6 +179,111 @@ test("close requires exact opposite signed size and purely reducing preview", as
   await preflight(f.rpc, { ...o, price: "30" });
   f.values.getReducingCapacity.effectiveReducingCapacity = 99n;
   await assert.rejects(preflight(f.rpc, o));
+});
+
+for (const position of [100n, -100n]) test(`production reader closes above-cap position ${position} to zero`, async (t) => {
+  const r = readerFixture(owner, operator, pool);
+  r.values.getPerpPoolParameters.maxPositionSize = 50n;
+  r.values.getPosition.size = position;
+  r.values.getReducingCapacity.positionSize = position;
+  r.values.getReducingCapacity.effectiveReducingCapacity = 100n;
+  const o = { ...execution(), close: true, side: position > 0n ? "short" as const : "long" as const };
+  let simulations = 0, simulationSuccess = true;
+  const rpc = { ...r.rpc, simulateContract: async (request: { args: readonly unknown[]; blockNumber: bigint }) => {
+    simulations++;
+    assert.equal(request.blockNumber, r.head);
+    assert.equal(request.args[1], position < 0n);
+    assert.equal(request.args[4], 100n);
+    return { result: [simulationSuccess, 1n] };
+  } } as unknown as typeof r.rpc;
+  const f = fixture(t, { preflight: async opts => preflight(r.rpc, opts), simulate: createPorts(rpc).ports.simulate });
+  f.receipt.logs = [{ address: pool, topics: encodeEventTopics({ abi: orderBookEventsAbi, eventName: "OrderFilled", args: { takerOrderId: 1n, makerOrderId: 2n } }), data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }], [100n, 0n, 0n, 100n]) }] as TransactionReceipt["logs"];
+  await runTrade(o, f.ports, f.journal);
+  assert.equal(simulations, 2);
+  const saved = JSON.parse(readFileSync(join(f.dir, `${hash}.json`), "utf8"));
+  assert.equal(saved.before.report.closePreview.remainingSize, "0");
+  assert.equal(saved.expectedPosition, "0");
+  assert.equal(saved.fullPositionDelta, true);
+  for (const opts of [{ ...o, qty: "0.5" }, { ...o, qty: "1.01" }, { ...o, side: position > 0n ? "long" as const : "short" as const }]) await assert.rejects(preflight(r.rpc, opts), /exactly match/);
+  r.values.getReducingCapacity.effectiveReducingCapacity = 99n;
+  await assert.rejects(preflight(r.rpc, o), /reducing capacity/);
+  r.values.getReducingCapacity.effectiveReducingCapacity = 100n;
+  r.values.getOrderBookParameters.minQuantity = 101n;
+  await assert.rejects(preflight(r.rpc, o), /min\/max bounds/);
+  r.values.getOrderBookParameters.minQuantity = 1n;
+  r.values.getOrderBookParameters.lotSize = 3n;
+  await assert.rejects(preflight(r.rpc, o), /grid/);
+  r.values.getOrderBookParameters.lotSize = 1n;
+  r.values.tryGetHealthSnapshot[0] = false;
+  await assert.rejects(preflight(r.rpc, o), /margin preview/);
+  r.values.tryGetHealthSnapshot[0] = true;
+  simulationSuccess = false;
+  await assert.rejects(runTrade(o, f.ports, f.journal), /simulation returned unsuccessful/);
+  assert.equal(f.counts().signs, 1); assert.equal(f.counts().sends, 1);
+});
+test("production reader refuses opening quantity above position cap", async () => {
+  const r = readerFixture(owner, operator, pool);
+  r.values.getPerpPoolParameters.maxPositionSize = 50n;
+  for (const side of ["long", "short"] as const) await assert.rejects(preflight(r.rpc, { ...options(), side }), /min\/max bounds/);
+});
+
+for (const mode of ["missing", "altered"] as const) test(`${mode} concurrency acknowledgment refuses signing and sending`, async (t) => {
+  const f = fixture(t, { confirm: async intent => {
+    const parsed = JSON.parse(intent.slice("CONFIRM ".length));
+    if (mode === "missing") delete parsed.acknowledgment;
+    else parsed.acknowledgment = "Concurrent activity is allowed";
+    return `CONFIRM ${JSON.stringify(parsed)}`;
+  } });
+  await assert.rejects(runTrade(execution(), f.ports, f.journal), /Confirmation did not exactly match/);
+  assert.equal(f.counts().signs, 0); assert.equal(f.counts().sends, 0);
+});
+
+// Wrap real directory syscalls, rather than treating directory existence as durability.
+function directoryTrace(fail?: { operation: string; path: string }) {
+  const events: string[] = [], paths = new Map<number, string>();
+  const io: NonNullable<ConstructorParameters<typeof Journal>[1]> = {
+    openSync: (path, flags, mode) => {
+      const name = String(path); events.push(`open:${name}`);
+      if (fail?.operation === "open" && fail.path === name) throw Error("directory open failure");
+      const fd = openSync(path, flags, mode); paths.set(fd, name); return fd;
+    },
+    fsyncSync: fd => {
+      const name = paths.get(fd)!; events.push(`fsync:${name}`);
+      if (fail?.operation === "fsync" && fail.path === name) throw Error("directory fsync failure");
+      fsyncSync(fd);
+    },
+    closeSync: fd => {
+      const name = paths.get(fd)!; events.push(`close:${name}`);
+      closeSync(fd); paths.delete(fd);
+      if (fail?.operation === "close" && fail.path === name) throw Error("directory close failure");
+    },
+  };
+  return { events, paths, io };
+}
+test("nested first-use journal fsyncs each new directory and preexisting parent before signer", async (t) => {
+  const f = fixture(t), directory = join(f.dir, "new", "nested", "journal");
+  const trace = directoryTrace();
+  const expected = [directory, join(f.dir, "new", "nested"), join(f.dir, "new"), f.dir, directory].flatMap(path => [`open:${path}`, `fsync:${path}`, `close:${path}`]);
+  f.ports.loadSigner = async () => { assert.deepEqual(trace.events, expected); throw Error("stop before signer"); };
+  await assert.rejects(runTrade(execution(), f.ports, new Journal(directory, trace.io)), /stop before signer/);
+  assert.equal(trace.paths.size, 0);
+  assert.equal(f.counts().signs, 0); assert.equal(f.counts().sends, 0);
+});
+for (const operation of ["open", "fsync", "close"]) test(`new journal ancestor ${operation} failure blocks signing and sending`, async (t) => {
+  const f = fixture(t), directory = join(f.dir, "new", "journal");
+  const trace = directoryTrace({ operation, path: f.dir });
+  await assert.rejects(runTrade(execution(), f.ports, new Journal(directory, trace.io)), /directory .* failure/);
+  assert.ok(trace.events.includes(`${operation}:${f.dir}`));
+  assert.equal(trace.paths.size, 0);
+  assert.deepEqual(f.counts(), { loads: 0, signs: 0, sends: 0, checks: 0 });
+});
+test("existing journal directory keeps mode and only syncs its lock entry", (t) => {
+  const f = fixture(t), before = statSync(f.dir).mode, trace = directoryTrace();
+  const journal = new Journal(f.dir, trace.io);
+  journal.acquire();
+  assert.deepEqual(trace.events, [`open:${f.dir}`, `fsync:${f.dir}`, `close:${f.dir}`]);
+  assert.equal(statSync(f.dir).mode, before);
+  journal.release();
 });
 
 test("absolute signer path must end in exactly .env", () => {
@@ -292,7 +399,7 @@ test("second production preflight rejects changed mark cap after confirmation wi
   const seen: bigint[] = [];
   const f = fixture(t, {
     preflight: async o => { seen.push(r.head); return preflight(r.rpc, o); },
-    confirm: async intent => { r.head = 6n; r.values.tryGetHealthSnapshot[1].markPrice = 2600n; return intent; },
+    confirm: async intent => { r.head = 6n; r.values.tryGetHealthSnapshot[1].markPrice = 26n * 10n ** 18n; return intent; },
   });
   await assert.rejects(runTrade(execution(), f.ports, f.journal), /notional exceeds/);
   assert.deepEqual(seen, [5n, 6n]);

@@ -5,16 +5,16 @@ export type ReadRequest = { address: Address; functionName: string; blockNumber:
 export function readerFixture(owner: Address, operator: Address, pool: Address) {
   // Deliberately mutable RPC responses for regression fault injection.
   const values: Record<string, any> = {
-    marginBank: d.marginBank, decimals: 2,
-    getSystemConfig: { marginBank: d.marginBank, collateralToken: d.collateral, perpPoolFactory: d.perpPoolFactory, liquidationEngine: zeroAddress, insuranceFund: zeroAddress, feeRecipient: zeroAddress, maxLeverageLimit: 100, fullyWired: true },
+    marginBank: d.marginBank, decimals: 18,
+    getSystemConfig: { marginBank: d.marginBank, collateralToken: "0xed7993A74dAe1e6656B704A424DcD8711aAf4F72", perpPoolFactory: d.perpPoolFactory, liquidationEngine: zeroAddress, insuranceFund: zeroAddress, feeRecipient: zeroAddress, maxLeverageLimit: 100, fullyWired: true },
     isDeployedByFactory: true, isPerpPoolRegistered: true,
-    tryGetHealthSnapshot: [true, { oneBase: 100n, markPrice: 100n, projectedCumulativeFunding: 0n, effectiveIMFBps: 1000n, maintenanceMarginBps: 500n, closeOutMarginBps: 200n }],
+    tryGetHealthSnapshot: [true, { oneBase: 100n, markPrice: 10n ** 18n, projectedCumulativeFunding: 0n, effectiveIMFBps: 1000n, maintenanceMarginBps: 500n, closeOutMarginBps: 200n }],
     getOrderBookParameters: { tickSize: 1n, lotSize: 1n, minQuantity: 1n },
     getPerpPoolParameters: { initialMarginBps: 1000n, maintenanceMarginBps: 500n, closeOutMarginBps: 200n, maxPositionSize: 10000n, maxOpenInterest: 100000n, takerFeeBpsTimes1k: 1000n, makerFeeBpsTimes1k: 0n, insuranceFundShareBps: 0n },
     getReducingCapacity: { positionSize: 0n, pendingBidQuantity: 0n, pendingAskQuantity: 0n, pendingOppositeQuantity: 0n, effectiveReducingCapacity: 0n },
-    getPosition: { size: 0n, avgEntryPrice: 100n, entryFundingIndex: 0n, lastUpdatedTimestampNs: 0n },
-    getAccountState: { unlockedCollateralBalance: 100000n, lockedCollateral: 0n, activePerpPools: [pool, operator] },
-    getAccountHealth: [100000n, 0n, 0n, 0n], getMaxLeverage: 0, getMaxLeverageLimit: 100,
+    getPosition: { size: 0n, avgEntryPrice: 10n ** 18n, entryFundingIndex: 0n, lastUpdatedTimestampNs: 0n },
+    getAccountState: { unlockedCollateralBalance: 1000n * 10n ** 18n, lockedCollateral: 0n, activePerpPools: [pool, operator] },
+    getAccountHealth: [1000n * 10n ** 18n, 0n, 0n, 0n], getMaxLeverage: 0, getMaxLeverageLimit: 100,
     getCreditFloor: 0n, getVoucherLeverageCap: 10, isVoucherMarketAllowed: true, isRestricted: false, isolationAllowsMarket: true,
     getOpenInterest: 0n, getOwnOpenOrders: [], isOperatorAuthorized: true, getStopOrderRegistry: zeroAddress,
   };
