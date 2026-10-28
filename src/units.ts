@@ -14,12 +14,12 @@ export function toRaw(whole: string | number, decimals: number): bigint {
   return neg ? -base : base;
 }
 
-export function fromRaw(raw: bigint, decimals: number, show = 6): string {
+export function fromRaw(raw: bigint, decimals: number): string {
   const neg = raw < 0n;
   const abs = neg ? -raw : raw;
   const base = 10n ** BigInt(decimals);
   const whole = abs / base;
-  const frac = (abs % base).toString().padStart(decimals, "0").slice(0, Math.min(show, decimals));
+  const frac = (abs % base).toString().padStart(decimals, "0");
   return `${neg ? "-" : ""}${whole}.${frac.replace(/0+$/, "") || "0"}`;
 }
 

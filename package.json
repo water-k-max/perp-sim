@@ -9,6 +9,7 @@
     "backtest": "tsx src/bin/backtest.ts",
     "preflight": "tsx src/bin/preflight.ts",
     "validate": "tsx src/bin/validate.ts",
+    "test:units": "tsx --test src/units.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
