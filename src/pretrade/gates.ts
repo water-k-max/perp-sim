@@ -150,12 +150,6 @@ export async function contractGates(
   intent: Intent,
 ): Promise<{ preview: unknown; maxSize: unknown; coldProbe: boolean }> {
   const base = { pool: cfg.pool as `0x${string}`, marginBank: cfg.marginBank as `0x${string}`, account };
-  // Direction travels in `isBid`, never in the sign of the quantity. The pool's own view is
-  // `meetsIMForFill(address, address, uint256 additionalSize, uint256 orderPrice)`, and
-  // `perpOrderMarginQuote` derives its reducing/increasing split from `isBid` too. A
-  // negative quantity is not rejected: `previewPerpOrderMargin` hands back a NEGATIVE
-  // `lockAmount` and reports both gates satisfied for an order the unsigned call says
-  // cannot be funded. `pnpm validate` prints that pair.
   const [preview, maxSize, coldProbe] = await Promise.all([
     client.previewPerpOrderMargin({ ...base, isBid: intent.side === "long", quantity: intent.size, price: intent.price }),
     client.getMaxPerpOrderSize({ ...base, isBid: intent.side === "long", price: intent.price }),
