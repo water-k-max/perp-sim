@@ -9,22 +9,36 @@
   },
   "description": "Backtester and pre-trade simulator for dreamDEX perps, built on the protocol's own exported arithmetic.",
   "scripts": {
-    "dev": "tsx src/bin/web.ts",
-    "test:web": "tsx --test src/backtest-api.test.ts",
+    "dev": "pnpm build:web && tsx src/bin/web.ts",
+    "build:web": "esbuild src/web/main.tsx --bundle --minify --format=iife --platform=browser --target=es2022 --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=dist/web/app.js",
+    "typecheck:web": "tsc --project tsconfig.web.json --noEmit",
+    "test:web": "tsx --test src/backtest-api.test.ts src/backtest-repro.test.ts",
     "probe:markets": "tsx src/bin/probe-markets.ts",
     "backtest": "tsx src/bin/backtest.ts",
     "preflight": "tsx src/bin/preflight.ts",
     "validate": "tsx src/bin/validate.ts",
+    "replay-account": "tsx src/bin/replay-account.ts",
+    "replay-run": "tsx src/bin/replay-run.ts",
+    "test:runs": "tsx --test src/runs/*.test.ts",
     "test:units": "tsx --test src/units.test.ts",
-    "typecheck": "tsc --noEmit"
+    "test:engine": "tsx --test src/engine/*.test.ts",
+    "test:data": "tsx --test src/data/*.test.ts",
+    "test:analytics": "tsx --test src/analytics/*.test.ts",
+    "test:verify": "tsx --test src/verify/*.test.ts",
+    "typecheck": "tsc --noEmit && pnpm typecheck:web"
   },
   "dependencies": {
     "@somnia-chain/markets-sdk": "0.32.1",
     "dotenv": "^18.0.8",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "viem": "^2.57.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

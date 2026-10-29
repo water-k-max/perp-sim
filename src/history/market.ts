@@ -1,5 +1,7 @@
 import type { PerpMarket, SomniaMarketsClient } from "@somnia-chain/markets-sdk";
 import { retryRead } from "../retry.js";
+import { epochBefore } from "../data/graphql.js";
+import { applyParams, ParameterTimeline, type ResolvedParams } from "../data/params.js";
 
 /**
  *  One perp market, with every constant a backtest needs resolved from the chain and the
@@ -90,4 +92,25 @@ export async function resolveConfig(
     fundingIntervalSec: market.fundingIntervalSec as number,
     imBpsMismatch: BigInt(market.initialMarginBps) !== risk.initialMarginBps,
   };
+}
+
+/**
+ *  The config a market enforced at one block. Live reads cover the fields no epoch carries
+ *  (decimals, tick, lot, and the account's effective IMF); the epoch covers the risk and fee
+ *  fields. `params.origin` says which came from where, so a run can report it.
+ */
+export async function resolveConfigAt(
+  client: SomniaMarketsClient,
+  market: PerpMarket,
+  block: number,
+): Promise<{ config: MarketConfig; params: ResolvedParams }> {
+  const live = await resolveConfig(client, market);
+  const row = await epochBefore(market.poolAddress, block);
+  const params = new ParameterTimeline(row ? [row] : [], live).atBlock(block);
+  return { config: applyParams(live, params), params };
+}
+
+/** The pool's fee for a fill, in the raw `bps × 1000` scale the chain stores. */
+export function feeBps(cfg: MarketConfig, role: "taker" | "maker"): bigint {
+  return role === "taker" ? cfg.takerFeeBpsTimes1k : cfg.makerFeeBpsTimes1k;
 }

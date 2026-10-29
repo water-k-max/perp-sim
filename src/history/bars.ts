@@ -8,6 +8,9 @@ import type { Candle, FundingRateUpdate } from "@somnia-chain/markets-sdk";
 export type Bar = {
   /** Settlement time, unix seconds. */
   t: number;
+  /** Chain position of the settlement; absent only for synthetic/legacy bars. */
+  block?: number;
+  logIndex?: number;
   /**
    *  The price the position is marked at. A null `markPrice` is the contract's sentinel
    *  for a stale or reverting feed, NOT a price of zero, so it falls back to the index.
@@ -71,6 +74,9 @@ export function buildBars(rows: readonly FundingRateUpdate[]): Bar[] {
     const gapSec = prev === null ? 0 : t - Number(prev.timestamp);
     bars.push({
       t,
+      block: row.blockNumber === undefined ? undefined : Number(row.blockNumber),
+      logIndex: (row as FundingRateUpdate & { logIndex?: number }).logIndex ??
+        (/^\d+_\d+$/.test(row.id) ? Number(row.id.split("_")[1]) : undefined),
       mark,
       markSource,
       indexPrice: BigInt(row.indexPrice),

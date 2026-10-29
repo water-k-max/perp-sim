@@ -8,7 +8,8 @@
  *  in time. A backtester cannot tell a genuine result apart from an outage, so the retry is
  *  bounded and it says out loud when it fired.
  */
-const RETRYABLE = /genesis check failed|took too long|timed out|Socket closed|connection|SocketClosed/i;
+const RETRYABLE =
+  /genesis check failed|took too long|timed out|timeout|Socket closed|connection|fetch failed|EAI_AGAIN|ECONNRESET|ECONNREFUSED/i;
 
 export async function retryRead<T>(
   label: string,

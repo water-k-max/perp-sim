@@ -5,62 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090e1c">
   <title>NOVA Protocol · Backtest Lab</title>
-  <link rel="stylesheet" href="app.css">
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to workspace</a>
-  <aside class="sidebar">
-    <div class="brand"><span class="brand-shield" aria-hidden="true"></span><span>NOVA<small>PROTOCOL</small></span></div>
-    <div class="nav-label">RESEARCH WORKSPACE</div>
-    <nav aria-label="Workspace"><a class="active" href="#main" aria-current="page"><span aria-hidden="true">▥</span> Backtest Lab <span class="nav-dot"></span></a></nav>
-    <div class="sidebar-note"><span class="eyebrow">BUILT FOR PERSPECTIVE</span><p>Less guesswork.<br>More understanding.</p><small>Historical simulation.<br>Not a promise of performance.</small></div>
-    <div class="sidebar-footer">NOVA / RESEARCH TOOLS</div>
-  </aside>
-  <main id="main">
-    <header class="topbar"><div>Research <span>/</span> <strong>Backtest Lab</strong></div><div class="region"><i aria-hidden="true"></i> Tokyo <span>Read-only region</span></div></header>
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-copy"><p class="eyebrow">IDEAS IN. INSIGHT OUT.</p><h1 id="hero-title">Test the idea.<br><span>Understand the cost.</span></h1><p>Explore a perpetual position through historical markets.<br class="desktop-break"> See what price, funding, and fees do to the outcome.</p><div class="hero-tags"><span>Historical data</span><span>Transparent assumptions</span></div></div>
-      <div class="hero-art" role="img" aria-label="NOVA cyan and violet shield"></div>
-    </section>
-    <div class="workspace-heading"><h2>Your experiment</h2><span>01 / CONFIGURE & SIMULATE</span></div>
-    <div class="workspace">
-      <section class="panel configuration" aria-labelledby="config-title">
-        <div class="panel-heading"><h3 id="config-title">Position setup</h3><span class="pill">PERPETUALS</span></div>
-        <p class="muted intro">One position. A clearer picture.</p>
-        <form id="backtest-form">
-          <fieldset id="inputs">
-            <label for="market">Market</label><select id="market" name="market"><option value="BTC">BTC · USDso</option><option value="ETH">ETH · USDso</option><option value="SOL">SOL · USDso</option><option value="ZRO">ZRO · USDso</option></select>
-            <fieldset class="direction"><legend>Direction</legend><div class="segmented"><label><input type="radio" name="side" value="long" checked><span>↗ Long</span></label><label><input type="radio" name="side" value="short"><span>↘ Short</span></label></div></fieldset>
-            <label for="size">Position size <span id="size-unit">BTC</span></label><input id="size" name="size" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" value="0.01" required aria-describedby="size-help"><small id="size-help" class="field-help">Base asset quantity, not leverage.</small>
-            <label for="cash">Starting cash <span>Quote currency</span></label><input id="cash" name="cash" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" value="1000" required>
-            <label for="days">Lookback window <span>1–90 days</span></label><div class="input-suffix"><input id="days" name="days" type="number" min="1" max="90" step="1" value="14" required><span>days</span></div>
-            <label class="checkbox"><input id="intrabar" name="intrabar" type="checkbox"><span>Include intrabar checks<small>Use hourly candle extremes for maintenance checks.</small></span></label>
-          </fieldset>
-          <button id="run" class="primary" type="submit"><span id="run-label">Run backtest</span><span aria-hidden="true">↗</span></button>
-          <p class="form-note">Simulation only. No orders are placed.</p>
-        </form>
-        <div id="error" class="error" role="alert" hidden><p id="error-text"></p><button id="retry" type="button" class="secondary">Retry last request</button></div>
-      </section>
-      <section class="results" id="results" aria-labelledby="results-title" aria-busy="false">
-        <div class="panel chart-panel"><div class="panel-heading"><div><h3 id="results-title">Performance overview</h3><p id="result-context" class="muted">Your results will appear here</p></div><span id="result-badge" class="pill">AWAITING RUN</span></div>
-          <p id="activity" class="activity" role="status" aria-live="polite"></p>
-          <div id="empty" class="empty"><div class="empty-icon" aria-hidden="true">⌁</div><h4>A hypothesis needs a test.</h4><p>Choose a market and set your position.<br>Run a backtest to reveal its historical equity curve.</p><span>No simulated results yet</span></div>
-          <div id="chart-wrap" hidden><div class="chart-legend"><span><i></i> Equity</span><span id="chart-unit"></span></div><svg id="chart" viewBox="0 0 760 280" role="img" aria-labelledby="chart-title chart-desc"><title id="chart-title">Historical equity</title><desc id="chart-desc"></desc></svg><p id="chart-summary" class="muted chart-summary"></p></div>
-          <div class="chart-footer"><span>PRICE + FUNDING − FEES</span><button id="export" type="button" class="text-button" disabled>↓ Export JSON</button></div>
-        </div>
-        <div class="metrics" aria-label="Backtest metrics">
-          <article class="panel metric"><h4>Ending equity</h4><strong id="equity">—</strong><small id="equity-note">Awaiting simulation</small></article>
-          <article class="panel metric"><h4>Price PnL</h4><strong id="pnl">—</strong><small>Price movement only</small></article>
-          <article class="panel metric"><h4>Net funding</h4><strong id="funding">—</strong><small>Signed funding contribution</small></article>
-          <article class="panel metric"><h4>Fees</h4><strong id="fees">—</strong><small>Reported simulation fees</small></article>
-          <article class="panel metric"><h4>Max drawdown</h4><strong id="drawdown">—</strong><small>Peak-to-trough decline</small></article>
-        </div>
-        <section class="panel coverage"><div class="panel-heading"><h3>Data coverage</h3><span id="coverage-badge" class="pill">NOT CHECKED</span></div><p id="coverage-empty" class="muted">Coverage is evaluated for each run. Missing data will be surfaced here.</p><dl id="coverage-list" hidden></dl><ul id="warnings" class="warnings" hidden></ul></section>
-      </section>
-    </div>
-    <details class="panel methodology"><summary>Know what you’re measuring <span>Methodology & assumptions</span></summary><div><p>This is a historical, fixed-size long or short position, not a live trade or a trading strategy. Starting cash and base-asset size are independent inputs; the market determines the quote currency.</p><p>Ending equity reflects the engine’s price PnL, signed funding, and reported fees. The chart plots returned equity samples; drawdown is the engine-reported peak-to-trough measure. Decimal amounts are preserved in JSON exports; chart values are converted to numbers for display.</p><p>Check settlement gaps, index-derived marks, resynchronization, and candle coverage before interpreting results. Incomplete data can distort outcomes. Do not assume realistic execution, slippage, liquidation, or borrowing costs unless the engine explicitly reports them. Past performance does not predict future returns.</p></div></details>
-    <footer class="main-footer"><span>NOVA PROTOCOL <span class="muted">/ Backtest Lab</span></span><span>Research, not financial advice.</span></footer>
-  </main>
+  <div id="root"></div>
 </body>
 </html>

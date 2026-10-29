@@ -1,119 +1,168 @@
 # perp-sim
 
-A read-only, funding-aware backtesting tool for dreamDEX perpetuals on Somnia Tokyo (Hideki), chain **50383**.
+A read-only backtester for dreamDEX perpetuals on Somnia Tokyo (Hideki), chain **50383**.
 
-Compare a hypothetical long or short position against historical price moves and funding costs, then inspect market constraints with optional read-only preflight analysis. No private key or funded wallet is needed for backtesting. The tool does not sign transactions, place orders, move collateral or close positions.
+It replays a strategy against the venue's own history — settlement bars, the recorded trade tape, hourly candles and per-epoch parameter changes — and reports equity, signed attribution, risk statistics and a set of mechanical invariants. It does not sign transactions, place orders, move collateral or close positions, and it never needs a private key or a funded wallet.
+
+Any of the indexed perp markets works, over any window the indexer covers (up to 90 days per run), with an entry size aligned to that market's live lot grid.
 
 ## What this build does
 
-- **Funding-aware backtest:** fetches historical settlements from the Tokyo indexer and replays a hypothetical fixed position using the SDK's arithmetic. Reports price PnL, funding, fees, equity and modeled maintenance breaches.
-- **Owner-aware preflight:** compares a proposed position with market rules and, optionally, the margin owner's contract previews.
-- **Arithmetic validation:** compares local margin and liquidation-price calculations with read-only contract previews.
+- **Tape fill model.** An order is matched against the pool's recorded trades inside a declared window after the decision, with a participation cap per realism profile. A window with no eligible flow reports *no fill*; it never substitutes the settlement mark.
+- **Settlement-mark oracle.** The same strategy can be replayed at the next settlement mark. This is the legacy, conservative path and it reproduces the committed golden run bit for bit.
+- **Per-epoch parameters.** Initial/maintenance margin, close-out, fees and position caps are resolved at each fill's own block from `PerpPoolParametersEpoch`, falling back to current chain parameters only when an epoch is missing.
+- **Real accounting.** Average-entry positions (the chain's own convention), taker and maker fees by role, funding by cumulative index, gas per transaction, side flips, and an exact cash identity.
+- **Analytics.** Sharpe, Sortino, drawdown, turnover, win rate, expectancy, holding time, 1-hour markouts, and a signed attribution whose residual must be zero.
+- **Invariants.** Equity identity, quantity identity, fee recomputation, no lookahead, determinism, coverage completeness and more — each either passes, fails, or is explicitly skipped with a reason.
+- **Account reconciliation.** Replays a public account's own fills through the same position book and diffs the result against the indexer's `PerpPositionChange` and `PerpFeeRecord` rows.
+- **Reproducible identity.** Every run carries a `runId`, a `dataVersion` (hash of the dataset), a `configHash` (parameters + model + strategy) and a `codeCommit`, so two runs that disagree can be told apart.
 
-**Status: backtesting verified against live Tokyo history.** The retained October 28, 2026 BTC replay covered **336 settlements, 0 missing settlements, 0 gap bars, 0 anchor resyncs and 0 forgiven intervals**. Starting with 1,000 hypothetical USDso, it ended at 958.785673940097159948; funding contributed −39.968530053144290052 and price PnL −1.24579600675855. These are historical replay results, not executed trades or profitability guarantees. Captures are local release evidence, not tracked GitHub files. The replay window ends at invocation time, so later runs have different windows, coverage and results.
-
-## Browser interface
-
-```bash
-pnpm install
-pnpm dev
-```
-
-Open `http://localhost:3000` for the NOVA Protocol Backtest Lab. Configure market, direction, base size, hypothetical cash and lookback, then run the replay. The market list and each market's lot size and minimum quantity are read live from the indexer, so the form defaults to a size the market's grid can actually accept and a below-grid size is reported as a sizing problem rather than a data failure. Results include equity, signed price/funding/fee contributions, settlement-mark maximum drawdown, coverage warnings and a JSON export. Intrabar mode uses hourly candles for modeled maintenance checks. The initial screen contains no invented results.
-
-The server binds to local loopback, accepts one replay at a time and limits lookbacks to 1–90 days. It serves only the frontend assets and the read-only backtest API; it never serves local environment files. This is a local research interface, not a hardened public hosting deployment. No wallet connection or transaction execution is included.
-
-The NOVA artwork is supplied by the project owner in `public/nova-storyboard.png`.
+**Status: verified against live Tokyo history.** The committed golden fixture replays 14 days of BTC into 336 settlements with 0 missing settlements and 0 gaps: 1,000 hypothetical USDso end at **946.750111830475226055**, with price PnL −11.54664041438527 and funding paid 41.703247755139503945. The same fixture replayed twice produces the identical event hash. These are historical replay results, not executed trades or profitability guarantees. The live indexer keeps growing, so a rerun over a different window has different coverage and different numbers.
 
 ## Quick start
 
-Use Node.js >=22 and pnpm >=12 (recorded environment: Node.js 22.23.4, pnpm 12.9.1). The workspace config uses pnpm 12's `allowBuilds` setting.
+Node.js >= 22 and pnpm >= 12 (recorded environment: Node.js 22.23.4, pnpm 12.9.1).
 
 ```bash
 pnpm install
 pnpm probe:markets
-pnpm backtest --market BTC --days 14 --side long --size 0.01 --cash 1000
+pnpm dev                                   # http://localhost:3000
+```
+
+CLI:
+
+```bash
+pnpm backtest --market BTC --days 14 --size 0.01 --cash 1000 --model tape
+pnpm backtest --market ZRO --days 7 --size 6 --profile conservative --model tape
 pnpm preflight --market ETH --side short --size 0.05 --cash 500
-pnpm validate --account '<MARGIN_OWNER_ADDRESS>'
+pnpm replay-account --account <PUBLIC_ADDRESS> --market BTC --days 3
+pnpm validate --account <MARGIN_OWNER_ADDRESS>
 ```
 
-Replace quoted placeholders before use. Optional endpoint and public account configuration is documented in `.env.example`. Do not add private keys to configuration, examples or recordings.
+Do not add private keys to configuration, examples or recordings. `.env` is ignored; only public addresses are ever read.
 
-## Backtest against Tokyo history
+## Browser interface
+
+Open `http://localhost:3000` for the NOVA Protocol Backtest Lab.
+
+- Market, direction, base size and hypothetical cash, with the lot grid and market minimum read live from the indexer.
+- Window as a lookback in days or an explicit UTC date range.
+- **Execution model** panel: tape fill model with optimistic/realistic/conservative profile, decision latency, gas per order, and the strategy (fixed position or SMA crossover).
+- Results: equity curve, signed price/funding/fee attribution, Sharpe/Sortino/turnover/win rate/markout, and tabs for closed trades, fills (with the modelled-fill notice), invariants and the run's identity.
+- A permanent **MODELLED FILL** badge when the tape model is used, and **NO FILL** when an entry never traded.
+- A run comparison list kept in browser storage, and a JSON export of the full response.
+
+The server binds to local loopback, accepts one replay at a time, caps request bodies and lookbacks, sets security headers and serves only frontend assets plus the read-only API. It never serves `.env` or cache files. This is a local research interface, not a hardened public deployment. No wallet connection or transaction execution is included.
+
+The NOVA artwork is supplied by the project owner in `public/nova-storyboard.png`.
+
+## Fill models
+
+`--model settlement-mark` (default) prices each order at the next settlement mark. It is simple, fully reproducible, and deliberately labelled as *not* a book fill.
+
+`--model tape` matches the order against the pool's recorded trades:
+
+| Profile | Window | Participation |
+| --- | --- | --- |
+| `optimistic` | 5 s | 100% of eligible volume |
+| `realistic` | 30 s | 25% |
+| `conservative` | 120 s | 5% |
+
+- The window opens `--latency` seconds after the decision (default 1 s).
+- A **buy taker** consumes prints where the aggressor was also a bid (`takerIsBid = true`), i.e. trades at the ask; a **sell taker** consumes sell-aggressor prints at the bid. Using the opposite side would price a buy at the bid and fake a profit, so this rule is pinned by a test.
+- Size is floored to the market lot, capped by the profile's share of window volume, and may therefore fill partially.
+- No eligible print in the window → the order is rejected as `no-liquidity`. Thin testnet pools genuinely do this: a 6 ZRO order at one settlement found no counterparty flow inside 30 s. The report says so and never invents a fill.
+- Every result records `fillModel`, `profile`, `latencySec`, `windowSec`, the consumed tape slices and the fill's own timestamp.
+
+## Analytics
+
+All money is exact bigint internally and decimal strings at the API edge.
+
+- `totalReturnBps`, `maxDrawdownBps`, `turnoverBps` from marked equity.
+- `sharpe` and `sortino` annualised from per-settlement returns, `null` under three bars or zero variance.
+- `winRateBps`, `avgTrade`, `expectancy`, `avgHoldSec`, best/worst trade from closed trades.
+- `markout1hBps`: favourable-after-fill price movement in basis points, using the hourly candle that contains `fill.t + 1 h`. Only the 1-hour horizon is published.
+- `attribution`: `Δequity = price − funding − fees − gas`, each signed, with an exact `residual`.
+
+## Invariants
+
+`checkRun` evaluates, and the CLI exits `2` if any fail:
+
+| Check | Severity | Meaning |
+| --- | --- | --- |
+| `equity-identity` | error | attribution residual is exactly zero |
+| `quantity-identity` | error | fills net to the final position |
+| `fee-recompute` | error | every fee re-derives from its notional and rate |
+| `no-lookahead` | error | every fill is at or after decision + latency |
+| `determinism` | error | the recomputed event hash equals the recorded one |
+| `coverage-complete` | error | no missing settlements or gaps (when coverage is supplied) |
+| `equity-nonnegative` | warn | equity never goes negative un-liquidated |
+| `liquidation-fill-modelled` | skip | no liquidation fill price exists in the tape |
+| `book-not-crossed` | skip | no historical depth is published, so queue position is not modelled |
+
+Tests inject a wrong fee, a lookahead fill, a cash mismatch, a tampered hash and a broken quantity identity, and each must fail its own check.
+
+## Account reconciliation
 
 ```bash
-pnpm backtest --market BTC --days 14 --side long --size 0.01 --cash 1000 --interval 3600
+pnpm replay-account --account <PUBLIC_ADDRESS> --market BTC --days 3
 ```
 
-This fetches the preceding 14 days, models a 0.01 BTC long with 1,000 hypothetical USDso, and uses hourly candle extremes for intra-bar maintenance checks. It is an illustrative replay, not an order recommendation.
+Read-only. Fetches the account's own fills, books them through the same `PositionBook` at their real prices and recorded fees, and diffs row by row against `PerpPositionChange` (`kind`, closed size, exit price, realized PnL) and `PerpFeeRecord`. Zero tolerance on fees, ±1 raw unit on entry averaging. It refuses anything that would need a signer.
 
-Compare the opposite side:
+The position book itself matches the chain's semantics, proven against live rows: one volume-weighted average entry per position (truncating), partial closes realize against that average and leave it unchanged, and realized PnL divides rounding down. A live 20-fill BTC account reconciled **20/20 exactly**.
 
-```bash
-pnpm backtest --market BTC --days 14 --side short --size 0.01 --cash 1000 --interval 3600
-```
+## Data layer
 
-To check settlement marks only, without fetching candle extremes:
+- Reads: funding settlements, hourly candles, `PerpPoolParametersEpoch`, and the trade tape in short slices around each execution.
+- Content-addressed cache: gzipped JSON under `.cache/perp-sim/`, keyed by a SHA-256 of the exact request (chain, pool, block/second bounds, kinds). Replaying the same window reads from disk; a parameter sweep reuses it for free.
+- `dataVersion` hashes the manifest (chain, pool, bounds, row counts, first/last ids, per-segment hashes, indexer URL, SDK version). `codeCommit` lives in `runId`, so "same data, new code" stays distinguishable.
+- Page budgets are explicit; a truncated read propagates `complete: false` to the response, the warnings and the UI badge. A short page on a live table is never read as "end of data".
 
-```bash
-pnpm backtest --market BTC --days 14 --side long --size 0.01 --cash 1000 --no-intrabar
-```
-
-Run `pnpm probe:markets` to discover symbols and pools. Changing `--cash` changes only simulated collateral; it does not read, deposit, move or spend a voucher. There are no fixed start/end-date or live-trading flags.
-
-The replay uses SDK arithmetic and cumulative funding-index changes rather than assuming funding scales with elapsed time when the protocol forgives catch-up intervals. Market decimals and risk parameters are resolved at runtime.
+## CLI reference
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--market` | `BTC` | Symbol, pair or pool address |
-| `--days` | `14` | Look-back window |
+| `--days` | `14` | Look-back window (1–90) |
+| `--from`, `--to` | — | Explicit UTC bounds (ISO date or unix seconds) |
 | `--side` | `long` | `long` or `short` |
-| `--size` | `0.01` | Whole base units, aligned down to lot grid |
-| `--cash` | `1000` | Hypothetical USDso collateral |
-| `--interval` | `3600` | Candle resolution in seconds; use an indexer-supported resolution |
-| `--no-intrabar` | off | Check settlement marks only |
+| `--size` | `0.01` | Whole base units, aligned down to the lot grid |
+| `--cash` | `1000` | Hypothetical quote collateral |
+| `--model` | `settlement-mark` | `settlement-mark` or `tape` |
+| `--profile` | `realistic` | `optimistic`, `realistic` or `conservative` (tape only) |
+| `--latency` | `1` | Decision-to-market latency in seconds |
+| `--gas` | `0` | Gas per order in quote units |
+| `--strategy` | `fixed` | `fixed` or `sma` |
+| `--fast`, `--slow` | `6`, `24` | SMA windows in bars |
+| `--at-bar` | `1` | Bar at which the fixed strategy enters |
+| `--no-intrabar` | off | Mark at settlements only |
+| `--json` | off | Print the full API response instead of the report |
 
-Read the output in this order:
-
-1. **Market configuration:** pool, decimals, lot/minimum sizes and risk parameters. Inspect the size after lot-grid alignment.
-2. **History coverage:** dates, settlements found versus expected, gaps, index resyncs, forgiven intervals and candle coverage. If fewer than three settlements are returned, widen `--days`; network failures are not strategy results.
-3. **Position:** entry is assumed at the second settlement mark, not a book fill. Inspect below-minimum or above-cap warnings.
-4. **Equity:** `pnl + funding + fees` are signed contributions; negative funding is a cost. Amounts retain full precision; percentages are rounded.
-5. **Thinnest bars:** health is equity divided by maintenance requirement. A modeled breach is not an actual liquidation transaction.
-
-## Optional read-only preflight
-
-```bash
-pnpm preflight --market '<POOL_ADDRESS>' --side long --size '<BASE_QUANTITY>' --price '<ABSOLUTE_LIMIT_PRICE>' --cash '<HYPOTHETICAL_USDso>' --account '<MARGIN_OWNER_ADDRESS>'
-```
-
-Preflight checks minimum quantity, lot/tick grids, position and open-interest caps, collateral lock and adverse gap; it also prints current-rate carry context. `--account` means the **margin owner**, not a delegated operator. `--cash` is hypothetical collateral, not a deposit or balance override.
-
-With `--account`, contract previews (`previewPerpOrderMargin`, `getMaxPerpOrderSize` and contextual `meetsPerpImForFill`) appear alongside local calculations. The final **PASS is a hypothetical static verdict**, even if an account preview fails or is unavailable. It does not prove funded margin or that an order can execute. The IM-only probe excludes the full adverse-gap reserve; read every owner preview, not just PASS.
-
-Backtest and preflight are independent commands. Backtest does not enforce placement gates or automatically feed results into preflight. Preflight rounds inputs to grids.
+The settlement-mark default keeps every old command reproducible; `--model tape` turns on the professional path. Read the report top to bottom: market configuration, model, history coverage, planned versus filled position, result, attribution, analytics, fills, thinnest bars, invariants, warnings and the run identity.
 
 ## Verification
 
 ```bash
 pnpm typecheck
-pnpm test:units
-pnpm test:web
-pnpm validate --account '<MARGIN_OWNER_ADDRESS>'
+pnpm test:units && pnpm test:web && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:verify
 ```
 
-Typechecking and unit tests run locally. The unit suite covers decimal conversion and formatting, not the entire replay engine. `validate` requires live read-only access and compares margin lock, initial margin, adverse gap and projected liquidation-price arithmetic with contract previews at their own block.
-
-The retained October 27, 2026 validation capture covers BTC, ETH, SOL and ZRO × long/short × four size/price combinations: **32 cases, zero skipped, zero mismatches**, blocks 34,590,061–34,591,366. This is selected-case arithmetic validation, not proof of all behavior. Reusing SDK arithmetic reduces drift but does not eliminate modeling or implementation error.
+- The engine suite pins the chain's average-entry and floor-division semantics with real values, replays the committed BTC 14-day fixture bit for bit, and checks that the loop's books balance.
+- The web suite covers request parsing (legacy path unchanged, new fields, rejections), and the analytics suite covers the metric edge cases.
+- Browser harnesses (local, not part of the repo) exercise the empty state, loading, a live run, error/retry with a 429, JSON export, the model panel, window switching, tabs, invariants, run comparison and mobile layout with no console errors.
+- Live read-only checks used in development: contract previews via `pnpm validate`, and account reconciliation via `pnpm replay-account`.
 
 ## Limits
 
-- Replay assumes settlement-mark entry; it does not simulate books, slippage or partial fills. Candle extremes are only proxies for oracle marks.
-- A position closed at a settlement pays that settlement's funding. Funding is not a flat elapsed-time estimate.
-- One market/side is modeled; cross-market margin, ADL, insurance and liquidation execution are not simulated. `liquidated` means a modeled maintenance breach.
-- Backtest can model impossible-to-place positions. Optional preflight provides context, not execution guarantees.
-- Historical fee captures were zero; nonzero fees have not been validated against a charging pool. Synthetic testnet history does not establish strategy performance.
-- Indexer/RPC availability, incomplete history and changing state affect results.
+- **No order-book replay.** The venue publishes historical trades, not depth, so queue position and book impact are not modelled. The result never claims otherwise: the `book-not-crossed` invariant skips with that reason rather than passing.
+- **No liquidation fill price or liquidation fee.** A maintenance breach ends the run at the adverse extreme and is labelled as a modelled breach, not a liquidation transaction.
+- **Gas is a constant** (`--gas`), not a measured cost.
+- **Markouts are hourly only.** The 60-second candle series is not ingested, so 1 m and 5 m markouts are not reported.
+- **Fills are modelled, not executed.** A tape fill estimates what a small taker could have got; it is not a record of a real order. The forced end-of-run close is priced at the final settlement mark (the fills table marks it `tape prints: mark`) and the result says so in its warnings.
+- **One position at a time.** Cross-market margin, ADL, insurance funds, and multi-leg portfolios are out of scope, as are parameter sweeps, walk-forward and Monte Carlo (planned separately).
+- **Fees recorded on this testnet have been zero.** Nonzero taker/maker rates are implemented and unit-tested but have not been observed in a live charging pool.
+- Indexer/RPC availability, incomplete history and changing chain state affect results; a truncated read is surfaced rather than hidden.
 - The frontend is local-only. Public deployment and refreshed submission packaging remain separate release tasks.
 
 ## Network and layout
@@ -121,12 +170,18 @@ The retained October 27, 2026 validation capture covers BTC, ETH, SOL and ZRO ×
 Tokyo/Hideki testnet only, chain 50383; default indexer `https://hideki-dev.smk.somnia.host/v1/graphql`. Do not repoint this workflow at mainnet. Shannon is not the bounty network.
 
 ```text
-src/history/          market configuration, settlement history and bars
-src/engine/simulate.ts funding-aware position replay
-src/pretrade/gates.ts  static gates and contract cross-checks
-src/bin/              probe-markets, backtest, preflight, validate
+src/history/        market config, settlements, candles and bars
+src/data/           types, GraphQL reads, content-addressed cache, tape, parameter epochs
+src/engine/         event queue, position book, fill model, replay loop, legacy simulate oracle
+src/strategy/       strategy interface, fixed and SMA strategies
+src/analytics/      metrics, markouts and attribution
+src/verify/         invariants and account reconciliation
+src/runs/           run identity (runId, dataVersion, configHash, codeCommit)
+src/pretrade/       static gates and read-only contract cross-checks
+src/bin/            probe-markets, backtest, preflight, validate, replay-account, web
+public/             NOVA browser interface
 ```
 
 The former trade CLI, signer loading, transaction broadcasting, confirmation flow and journal implementation have been removed. Historical journals and old submission archives are not part of the active source and must not be treated as a current release. Removing code does not resolve any historical transaction or close any external position.
 
-Submission drafts and captures are local-only and gitignored. Existing packages predate this refactor; rebuild and verify their source, narrative, provenance and archive contents before submission.
+Submission drafts and captures are local-only and gitignored. Rebuild and verify their narrative, provenance and archive contents against this source before submission.

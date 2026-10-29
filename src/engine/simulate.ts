@@ -1,8 +1,12 @@
 import { perpLiquidationPrice, perpPositionAnalytics } from "@somnia-chain/markets-sdk";
 import type { Bar } from "../history/bars.js";
 import type { MarketConfig } from "../history/market.js";
+import { markLots, takerFee, type Lot, type Marked } from "./portfolio.js";
 
 export type Side = "long" | "short";
+export { markLots, takerFee, type Lot, type Marked };
+
+const BPS = 10_000n;
 
 export type Entry = {
   /** Index into the bar series this lot opens at. */
@@ -47,65 +51,6 @@ export type BarTrail = {
   healthBps: bigint;
   liquidationPrice: bigint | null;
 };
-
-export type Marked = {
-  size: bigint;
-  notional: bigint;
-  unrealized: bigint;
-  accrued: bigint;
-  equity: bigint;
-  mmReq: bigint;
-  imReq: bigint;
-};
-
-type Lot = { price: bigint; size: bigint; entryFundingIndex: bigint };
-
-const BPS = 10_000n;
-const FEE_SCALE = BPS * 1_000n;
-
-/** Notional x the taker fee read from the pool. Zero where the pool charges none. */
-export function takerFee(cfg: MarketConfig, notional: bigint): bigint {
-  return (notional * cfg.takerFeeBpsTimes1k) / FEE_SCALE;
-}
-
-/** Mark every open lot at one price, in one pass, with the protocol's own per-position kernel. */
-export function markLots(
-  cfg: MarketConfig,
-  lots: readonly Lot[],
-  cash: bigint,
-  bar: Bar,
-  price: bigint,
-): Marked {
-  let size = 0n;
-  let notional = 0n;
-  let unrealized = 0n;
-  let accrued = 0n;
-  let contribution = 0n;
-  let mmReq = 0n;
-  let imReq = 0n;
-  for (const lot of lots) {
-    const signed = lot.size;
-    const m = perpPositionAnalytics({
-      size: signed,
-      avgEntryPrice: lot.price,
-      entryFundingIndex: lot.entryFundingIndex,
-      markPrice: price,
-      projectedCumulativeFunding: bar.cum,
-      oneBase: cfg.oneBase,
-      effectiveImfBps: cfg.effectiveImfBps,
-      maintenanceMarginBps: cfg.mmBps,
-      closeOutMarginBps: cfg.closeOutBps,
-    });
-    size += signed;
-    notional += m.notional;
-    unrealized += m.unrealizedPnl;
-    accrued += m.accruedFunding;
-    contribution += m.equityContribution;
-    mmReq += m.maintenanceMarginRequirement;
-    imReq += m.initialMarginRequirement;
-  }
-  return { size, notional, unrealized, accrued, equity: cash + contribution, mmReq, imReq };
-}
 
 /**
  *  Walk real settlement bars with a position book and report what happened.

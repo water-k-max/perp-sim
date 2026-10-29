@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { SomniaMarketsClient } from "@somnia-chain/markets-sdk";
+
+test("tape snapshots pin full rows, frozen offline, bounds and bounded paging", async () => {
+  const root = await mkdtemp(join(tmpdir(), "perp-tape-"));
+  process.env.PERP_SIM_CACHE = root;
+  const { createTapeSource, createFrozenTapeSource } = await import("./tape.js");
+  let price = "10";
+  let calls = 0;
+  let repeat = false;
+  const row = () => ({ id: "same", blockNumber: 10, logIndex: 1, timestamp: 100, fillPrice: price, quantity: "2", quoteQuantity: "20", takerIsBid: true, maker: null, taker: null, txHash: "tx" });
+  const client = { getFills: async (_pool: string, args: { offset: number }) => { calls++; return args.offset === 0 || repeat ? [row()] : []; } } as unknown as SomniaMarketsClient;
+  try {
+    const first = createTapeSource(client, "pool");
+    const a = await first.slice(100, 101);
+    assert.equal(a.complete, true);
+    assert.equal(calls, 2, "short page needs empty confirmation");
+    price = "11";
+    const fresh = createTapeSource(client, "pool", { refresh: true });
+    const b = await fresh.slice(100, 101);
+    assert.equal(a.key, b.key);
+    assert.notEqual(a.digest, b.digest);
+    assert.notEqual(first.digest(), fresh.digest());
+    const frozen = createFrozenTapeSource(first.consumed());
+    const before = calls;
+    assert.equal((await frozen.slice(100, 101)).fills[0]!.price, 10n);
+    assert.equal(calls, before);
+    assert.equal(frozen.digest(), first.digest());
+    await assert.rejects(frozen.slice(200, 201), /Missing/);
+    const bounded = createTapeSource(client, "pool", { fromSec: 100, toSec: 101, fromBlock: 11, toBlock: 20 });
+    const empty = await bounded.slice(99, 102);
+    assert.equal(empty.fills.length, 0);
+    assert.equal(empty.complete, false);
+    assert.equal(empty.truncated, true);
+    assert.ok(bounded.consumed()[0]!.digest);
+    repeat = true;
+    const stalled = await createTapeSource(client, "pool", { refresh: true }).slice(100, 101);
+    assert.equal(stalled.complete, false);
+    assert.equal(stalled.pages, 2);
+    const endless = { getFills: async (_: string, args: { offset: number }) => [{ ...row(), id: String(args.offset) }] } as unknown as SomniaMarketsClient;
+    const capped = await createTapeSource(endless, "pool", { refresh: true }).slice(100, 101);
+    assert.equal(capped.pages, 8);
+    assert.equal(capped.truncated, true);
+    const other = await createTapeSource(client, "pool", { chainId: 999 }).slice(100, 101);
+    assert.notEqual(other.key, a.key);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

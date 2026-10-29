@@ -1,4 +1,4 @@
-import type { Candle, FundingRateUpdate, SomniaMarketsClient } from "@somnia-chain/markets-sdk";
+import type { Candle, FillRow, FundingRateUpdate, SomniaMarketsClient } from "@somnia-chain/markets-sdk";
 import { retryRead } from "../retry.js";
 
 /** A windowed read plus the truth about whether it got the whole window. */
@@ -7,10 +7,16 @@ export type Window<T> = {
   /** False when the page budget ran out before the window did — never render this as full history. */
   complete: boolean;
   pages: number;
+  /** True when the read stopped on its row budget rather than on the end of the window. */
+  truncated?: boolean;
 };
 
-const PAGE = 500;
-const MAX_PAGES = 400;
+/** How much of a window a read may spend. Every HTTP round trip here is a full page. */
+export type PageBudget = { pageSize: number; maxPages: number };
+
+const SETTLEMENTS: PageBudget = { pageSize: 500, maxPages: 400 };
+const CANDLES: PageBudget = { pageSize: 500, maxPages: 400 };
+const FILLS: PageBudget = { pageSize: 1000, maxPages: 400 };
 
 /**
  *  Funding settlements over `[from, to]`, oldest-first.
@@ -24,6 +30,7 @@ export async function fundingWindow(
   pool: string,
   from: number,
   to: number,
+  budget: PageBudget = SETTLEMENTS,
 ): Promise<Window<FundingRateUpdate>> {
   const pages: FundingRateUpdate[][] = [];
   const seen = new Set<string>();
@@ -32,16 +39,16 @@ export async function fundingWindow(
   let complete = false;
   for (;;) {
     const page = await retryRead(`listFundingRateHistory ${pool.slice(0, 10)}`, () =>
-      client.listFundingRateHistory(pool, { from: cursor, to, order: "asc", limit: PAGE }),
+      client.listFundingRateHistory(pool, { from: cursor, to, order: "asc", limit: budget.pageSize }),
     );
     pagesRead += 1;
     pages.push(page);
-    if (page.length < PAGE) {
+    if (page.length < budget.pageSize) {
       complete = true;
       break;
     }
     const last = Number(page[page.length - 1].timestamp);
-    if (pagesRead >= MAX_PAGES || last + 1 > to) break;
+    if (pagesRead >= budget.maxPages || last + 1 > to) break;
     cursor = last + 1;
   }
   const rows: FundingRateUpdate[] = [];
@@ -75,6 +82,7 @@ export async function candleWindow(
   intervalSeconds: number,
   from: number,
   to: number,
+  budget: PageBudget = CANDLES,
 ): Promise<Window<Candle>> {
   const pages: Candle[][] = [];
   let upper = to;
@@ -82,16 +90,16 @@ export async function candleWindow(
   let complete = false;
   for (;;) {
     const page = await retryRead(`getCandles ${pool.slice(0, 10)}`, () =>
-      client.getCandles(pool, intervalSeconds, { from, to: upper, limit: PAGE, market: pool }),
+      client.getCandles(pool, intervalSeconds, { from, to: upper, limit: budget.pageSize, market: pool }),
     );
     pagesRead += 1;
     pages.unshift(page);
-    if (page.length < PAGE) {
+    if (page.length < budget.pageSize) {
       complete = true;
       break;
     }
     const oldest = Number(page[0].bucketStart);
-    if (pagesRead >= MAX_PAGES || oldest - 1 < from) break;
+    if (pagesRead >= budget.maxPages || oldest - 1 < from) break;
     upper = oldest - 1;
   }
   const byBucket = new Map<string, Candle>();
@@ -100,4 +108,58 @@ export async function candleWindow(
     (a, b) => Number(a.bucketStart) - Number(b.bucketStart),
   );
   return { rows, complete, pages: pagesRead };
+}
+
+/**
+ *  The pool's trade tape over an inclusive block range, oldest-first.
+ *
+ *  Paged by offset rather than by cursor: the range is immutable once its head block is
+ *  pinned to a settled settlement, so an offset is stable, and `getFillsPage` cannot be
+ *  scoped to one pool. `getFills` serves each page newest-first, so the page order is not
+ *  the tape order and the rows are sorted on `(blockNumber, logIndex)` afterwards — the
+ *  chain's own total order over fills.
+ */
+export async function fillWindow(
+  client: SomniaMarketsClient,
+  pool: string,
+  fromBlock: number,
+  toBlock: number,
+  budget: PageBudget = FILLS,
+): Promise<Window<FillRow>> {
+  const seen = new Set<string>();
+  const rows: FillRow[] = [];
+  let offset = 0;
+  let pages = 0;
+  let complete = false;
+  let truncated = false;
+  for (;;) {
+    const page = await retryRead(`getFills ${pool.slice(0, 10)}`, () =>
+      client.getFills(pool, { sinceBlock: fromBlock, toBlock, limit: budget.pageSize, offset }),
+    );
+    pages += 1;
+    for (const row of page) {
+      if (row.blockNumber === undefined || row.logIndex === undefined) {
+        throw new Error("fill row without a block position; refusing to order the tape on partial data");
+      }
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+    }
+    if (page.length < budget.pageSize) {
+      complete = true;
+      break;
+    }
+    if (pages >= budget.maxPages) {
+      truncated = true;
+      break;
+    }
+    offset += page.length;
+  }
+  rows.sort(compareFills);
+  return { rows, complete, pages, truncated };
+}
+
+/** `(blockNumber, logIndex)` — the order the chain emitted the fills in. */
+export function compareFills(a: FillRow, b: FillRow): number {
+  return Number(BigInt(a.blockNumber ?? 0) - BigInt(b.blockNumber ?? 0)) || (a.logIndex ?? 0) - (b.logIndex ?? 0);
 }

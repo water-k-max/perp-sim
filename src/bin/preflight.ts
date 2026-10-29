@@ -13,13 +13,14 @@ const arg = (name: string, fallback?: string): string | undefined => {
 
 const symbol = arg("market", "BTC") as string;
 const side = arg("side", "long") === "short" ? ("short" as const) : ("long" as const);
-const cash = toRaw(arg("cash", "1000") as string, 18);
+const cashArg = arg("cash", "1000") as string;
 const sizeArg = arg("size") as string | undefined;
 const priceArg = arg("price");
 const accountArg = arg("account") ?? (config.walletAddress as string | undefined);
 
 const client = createClient().client;
 const cfg = await resolveConfig(client, selectMarket(await listPerps(client), symbol));
+const cash = toRaw(cashArg, cfg.quoteDecimals);
 const state = await retryRead("getPerpState", () => client.getPerpState(cfg.pool as `0x${string}`));
 const system = await retryRead("getPerpSystemConfig", () => client.getPerpSystemConfig(cfg.marginBank as `0x${string}`));
 const mark = perpMarkForPnl(state);
