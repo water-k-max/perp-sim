@@ -285,3 +285,10 @@ deterministic for hashing.
    not estimable from trading days alone so its share stays zero and says so. A
    `prop-bounds` invariant checks outcome shares sum to one and payouts exist exactly
    when some path funds.
+7. **Forward-test analog (Phase 9).** No webhook exists on this venue; the native source
+   is the indexer's public `PerpPositionChange` rows for any account, replayed through
+   the same `PositionBook` (`reconcileAccount`) and landed on the stored band as PnL
+   offsets from each side's own start. The watched account is a per-request parameter
+   (`GET /api/forward?runId=…&account=0x…`) rather than a pinned credential — no owner
+   account was provided, and the product stays read-only. The comparison is served as
+   validated JSON; a dedicated chart overlay is deliberately left out of this phase.

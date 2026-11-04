@@ -6,6 +6,7 @@ import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { listDatasets } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
+import { forwardStoredRun, forwardTestJson } from "../forward/forward.js";
 import { resampleStoredRun } from "../resample/service.js";
 import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, readJson, SECURITY_HEADERS } from "./http-kit.js";
 
@@ -101,6 +102,31 @@ createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/datasets") {
     try { json(res, 200, { root: "local cache", datasets: await listDatasets(50) }); }
     catch (error) { console.error("Cache listing failed:", error instanceof Error ? error.message : "Unknown error"); json(res, 500, { error: "Cache listing failed. Details are in the local server terminal." }); }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/forward") {
+    const runId = url.searchParams.get("runId") ?? "";
+    const account = url.searchParams.get("account") ?? "";
+    if (!/^[a-f0-9]{64}$/.test(runId)) { json(res, 400, { error: "A full run digest is required." }); return; }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(account)) { json(res, 400, { error: "A 0x-prefixed 20-byte account address is required." }); return; }
+    const to = Math.min(Math.floor(Date.now() / 1000), Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000)));
+    const from = Number(url.searchParams.get("from") ?? to - 30 * 86_400);
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from <= 0 || to - from > 35 * 86_400 || from >= to) {
+      json(res, 400, { error: "The forward-test window must be at most 35 days and end after it starts." });
+      return;
+    }
+    if (!flight.tryAcquire()) { json(res, 429, { error: "A replay is already running. Please wait and try again." }); return; }
+    try {
+      const result = await forwardStoredRun({ client: createClient().client, account, runId, fromSec: from, toSec: to });
+      json(res, 200, forwardTestJson(result));
+    } catch (error) {
+      if (error instanceof Error && error.message === "No saved run with that id.") { json(res, 404, { error: "No saved run with that id." }); return; }
+      console.error("Forward test failed:", error instanceof Error ? error.message : "Unknown error");
+      json(res, 422, { error: "Forward test unavailable. Details are in the local server terminal." });
+    } finally {
+      flight.release();
+    }
     return;
   }
 
