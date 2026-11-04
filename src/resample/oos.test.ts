@@ -26,7 +26,8 @@ test("splitHoldback takes the tail and validates the fraction", () => {
   assert.throws(() => splitHoldback(trades, 0), /\(0, 1\)/);
   assert.throws(() => splitHoldback(trades, 1), /\(0, 1\)/);
   assert.throws(() => splitHoldback([rec(1n * E18)], 0.5), /two trades/);
-  assert.throws(() => splitHoldback(trades, 0.99), /no fit trades/);
+  // Any fraction below 1 keeps at least one fit trade.
+  assert.equal(splitHoldback(trades, 0.99).fit.length, 1);
 });
 
 test("the boundary is the 95th percentile: about 5% of fit paths cross it", () => {

@@ -60,8 +60,8 @@ export function splitHoldback(trades: readonly TradeRecord[], fraction: number):
   if (trades.length < 2) throw new Error("out-of-sample needs at least two trades");
   if (!(fraction > 0 && fraction < 1)) throw new Error("holdback fraction must be in (0, 1)");
   const heldCount = Math.max(1, Math.floor(trades.length * fraction));
+  // floor(n * fraction) <= n - 1 for fraction < 1, so the fit half is never empty here.
   const fitCount = trades.length - heldCount;
-  if (fitCount < 1) throw new Error("holdback fraction leaves no fit trades");
   return { fit: trades.slice(0, fitCount), held: trades.slice(fitCount) };
 }
 
