@@ -304,6 +304,7 @@ function modelResponse(replay: Replay, input: RunRequest) {
   if (!data.complete || cov.missingSettlements || cov.gaps || cov.anchorResynced) warnings.push("History has gaps, resyncs or incomplete pagination. Interpret results with caution.");
   if (!tapeComplete) warnings.push("Trade tape coverage is incomplete; fills depend on partial execution-window data.");
   if (!candleComplete) warnings.push("Candle coverage is incomplete; not every interval has an intrabar path.");
+  if (result.relaxedStressBars.length > 0) warnings.push(`The position opened mid-interval on bar(s) ${result.relaxedStressBars.join(", ")}; intrabar stress there is bounded to provably post-entry prices, so a same-interval maintenance breach cannot be asserted.`);
   const rejected = result.orders.filter((o) => o.status === "rejected");
   for (const order of rejected) warnings.push(`Order ${order.id} (${order.side} ${fromRaw(order.requested, cfg.baseDecimals)}) did not fill: ${order.reason ?? "unknown reason"}.`);
   const partial = result.orders.filter((o) => o.status === "partial");

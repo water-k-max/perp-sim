@@ -324,17 +324,43 @@ test("execution epochs resolve by block/log, including two changes in one block"
 
 test("liquidation cancels queued later prints without booking them", async () => {
   const { cfg } = load();
-  const bars = syntheticBars().slice(0, 3).map((b, i) => ({ ...b, t: 1000 + i * 3, low: i === 1 ? 0n : b.low }));
-  const out = await run({ cfg, bars, cash: 10n * 10n ** 18n, fillModel: "tape", fillProfile: "optimistic",
-    tape: fakeTape([tapePrint("1", 1002, 100n, 1), tapePrint("2", 1004, 100n, 1)]),
+  const bars = syntheticBars().slice(0, 5).map((b, i) => ({ ...b, t: 1000 + i * 3, low: i === 2 ? 0n : b.low }));
+  const out = await run({ cfg, bars, cash: 10n * 10n ** 18n, fillModel: "tape", fillProfile: "realistic",
+    tape: fakeTape([tapePrint("1", 1002, 100n, 4), tapePrint("2", 1008, 100n, 4), tapePrint("3", 1011, 100n, 4)]),
     strategy: { id: "liquidate", params: {}, onBar(ctx) {
       if (ctx.index === 0) ctx.submit({ side: "buy", size: 2n * cfg.oneBase });
     } },
   });
   assert.equal(out.status, "liquidated");
+  assert.equal(out.liquidatedAtBar, 2);
   assert.equal(out.fills.length, 1);
   assert.equal(out.fills[0]!.t, 1002);
   assert.equal(out.orders[0]!.status, "partial");
+});
+
+test("a mid-interval entry is not stressed by extremes that preceded it", async () => {
+  const { cfg } = load();
+  const cash = 200n * 10n ** 18n;
+  const size = 10n * cfg.oneBase;
+  // One interval with a deep low; the only question is whether the position existed for it.
+  const bars = syntheticBars().slice(0, 3).map((b, i) => ({ ...b, t: 1000 + i * 3, low: i === 1 ? 80n * 10n ** 18n : b.low }));
+
+  const tapeEntry = await run({ cfg, bars, cash, fillModel: "tape", fillProfile: "optimistic",
+    tape: fakeTape([tapePrint("1", 1002, 100n, 10)]),
+    strategy: { id: "mid-entry", params: {}, onBar(ctx) { if (ctx.index === 0) ctx.submit({ side: "buy", size }); } },
+  });
+  assert.deepEqual(tapeEntry.relaxedStressBars, [1]);
+  assert.equal(tapeEntry.liquidatedAtBar, null);
+  assert.equal(tapeEntry.status, "closed");
+  assert.equal(tapeEntry.fills[0]!.t, 1002);
+
+  // Same extreme, but the position predates the interval: the full low applies.
+  const markEntry = await run({ cfg, bars, cash, fillModel: "settlement-mark",
+    strategy: fixedPosition({ side: "long", size, atBar: 1 }),
+  });
+  assert.equal(markEntry.status, "liquidated");
+  assert.equal(markEntry.liquidatedAtBar, 1);
+  assert.deepEqual(markEntry.relaxedStressBars, []);
 });
 
 test("zero-latency callback cannot reuse its observed print", async () => {

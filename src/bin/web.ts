@@ -6,7 +6,7 @@ import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { listDatasets } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
-import { BodyTooLarge, SingleFlight, hostAllowed, json, originAllowed, readJson, SECURITY_HEADERS } from "./http-kit.js";
+import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, readJson, SECURITY_HEADERS } from "./http-kit.js";
 
 if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("NOVA Backtest Lab requires Node.js 22 or newer. Update the Node runtime on PATH before running pnpm dev.");
 const port = Number(process.env.PORT ?? 3000);
@@ -23,6 +23,7 @@ createServer(async (req, res) => {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(key, value);
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
   if (!hostAllowed(req, port)) { json(res, 403, { error: "Local access only." }); return; }
+  if (url.pathname.startsWith("/api/") && !fetchSiteAllowed(req)) { json(res, 403, { error: "Cross-site requests are not allowed." }); return; }
 
   if (req.method === "POST" && url.pathname === "/api/backtest") {
     if (!originAllowed(req, port)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
@@ -77,12 +78,14 @@ createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/datasets") {
     try { json(res, 200, { root: "local cache", datasets: await listDatasets(50) }); }
-    catch (error) { json(res, 500, { error: error instanceof Error ? error.message : "Cache listing failed." }); }
+    catch (error) { console.error("Cache listing failed:", error instanceof Error ? error.message : "Unknown error"); json(res, 500, { error: "Cache listing failed. Details are in the local server terminal." }); }
     return;
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/reconcile")) {
-    const account = decodeURIComponent(url.pathname.slice("/api/accounts/".length, -"/reconcile".length));
+    let account: string;
+    try { account = decodeURIComponent(url.pathname.slice("/api/accounts/".length, -"/reconcile".length)); }
+    catch { json(res, 400, { error: "A 0x-prefixed 20-byte account address is required." }); return; }
     if (!/^0x[0-9a-fA-F]{40}$/.test(account)) { json(res, 400, { error: "A 0x-prefixed 20-byte account address is required." }); return; }
     if (!flight.tryAcquire()) { json(res, 429, { error: "A replay is already running. Please wait and try again." }); return; }
     try {

@@ -7,8 +7,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
  */
 export const SECURITY_HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
   "Content-Security-Policy":
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
 
 export function json(res: ServerResponse, status: number, data: unknown): void {
@@ -25,6 +26,19 @@ export function hostAllowed(req: IncomingMessage, port: number): boolean {
 export function originAllowed(req: IncomingMessage, port: number): boolean {
   if (!req.headers.origin) return true;
   return [`http://localhost:${port}`, `http://127.0.0.1:${port}`].includes(req.headers.origin);
+}
+
+/**
+ *  Browsers stamp every request with `Sec-Fetch-Site`. A page on another site can trigger
+ *  this server's work through tags (no Origin header is sent for an <img>), so API routes
+ *  also reject anything the browser itself declares as not same-origin. Non-browser
+ *  clients send no header and are unaffected.
+ */
+export function fetchSiteAllowed(req: IncomingMessage): boolean {
+  const raw = req.headers["sec-fetch-site"];
+  const site = Array.isArray(raw) ? raw[0] : raw;
+  if (site === undefined) return true;
+  return site === "same-origin" || site === "none";
 }
 
 export async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {

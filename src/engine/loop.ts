@@ -83,6 +83,8 @@ export type RunResult = {
   liquidatedAtBar: number | null;
   liquidatedAtPrice: bigint | null;
   closedAtBar: number | null;
+  /** Bars whose stress used only provably post-entry prices, because the position opened mid-interval. */
+  relaxedStressBars: number[];
   trail: BarTrail[];
   fills: ModeledFill[];
   orders: OrderOutcome[];
@@ -143,6 +145,7 @@ export async function run(input: RunInput): Promise<RunResult> {
   const used = new Map<string, bigint>();
   let now = bars[0]!.t;
   let cursor: ChainPosition | undefined;
+  const relaxedStress: number[] = [];
   const resolve = (t: number, pos?: ChainPosition): void => {
     if (input.params) book.cfg = applyParams(cfg, pos ? input.params.atPosition(pos.block, pos.logIndex) : input.params.at(t));
   };
@@ -343,7 +346,20 @@ export async function run(input: RunInput): Promise<RunResult> {
 
     // The adverse extreme only matters when the position is open; a flat book has no risk.
     const signed = at.size;
-    const worst = signed > 0n ? bar.low : bar.high;
+    let worst = signed > 0n ? bar.low : bar.high;
+    // A position opened inside this interval cannot provably have seen the interval's
+    // extreme: candle ordering is unknown, so the adverse bound becomes the worse of the
+    // two prices the position is known to have experienced — its entry and this mark.
+    // Entries at a bar's close (the settlement-mark model's convention) keep the legacy
+    // whole-bar stress, so the loop stays bit-for-bit with the legacy oracle.
+    const lot = book.lots[0];
+    const intervalStart = index > 0 ? bars[index - 1]!.t : bar.t;
+    if (!flat && worst !== null && lot !== undefined && lot.openedAt !== undefined &&
+        lot.openedAt > intervalStart && lot.openedAt < bar.t) {
+      const entry = lot.price;
+      worst = signed > 0n ? (entry < bar.mark ? entry : bar.mark) : (entry > bar.mark ? entry : bar.mark);
+      relaxedStress.push(index);
+    }
     const adverse = !flat && worst !== null && (signed > 0n ? worst < bar.mark : worst > bar.mark);
     const stressed = adverse ? book.mark(bar, worst!) : null;
     const equity = stressed?.equity ?? at.equity;
@@ -454,6 +470,7 @@ export async function run(input: RunInput): Promise<RunResult> {
     liquidatedAtBar,
     liquidatedAtPrice,
     closedAtBar,
+    relaxedStressBars: relaxedStress,
     trail,
     fills,
     orders,

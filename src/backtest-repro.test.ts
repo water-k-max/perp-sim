@@ -114,3 +114,33 @@ test("saved reports survive server restarts and CLI replay in fresh processes", 
     }
   }
 });
+
+test("malformed account URLs and cross-site browser requests never kill the server", async () => {
+  const cwd = new URL("../", import.meta.url);
+  const server = spawn(process.execPath, ["--import", "tsx", "src/bin/web.ts"], { cwd, env: { ...process.env, PORT: "3198" }, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await Promise.race([
+      once(server.stdout, "data"),
+      once(server, "exit").then(([code]) => { throw new Error(`Preview exited before listening: ${code}`); }),
+    ]);
+    const base = "http://127.0.0.1:3198";
+    for (const path of ["/api/accounts/%zz/reconcile", "/api/accounts/%/reconcile", "/api/accounts/%E0%A4/reconcile"]) {
+      const response = await fetch(base + path);
+      assert.equal(response.status, 400, path);
+      assert.equal((await response.json() as { error: string }).error.includes("account address"), true);
+    }
+    const crossSite = await fetch(`${base}/api/runs`, { headers: { "Sec-Fetch-Site": "cross-site" } });
+    assert.equal(crossSite.status, 403);
+    const crossSitePost = await fetch(`${base}/api/backtest`, { method: "POST", headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" }, body: "{}" });
+    assert.equal(crossSitePost.status, 403);
+    const sameOrigin = await fetch(`${base}/api/runs`, { headers: { "Sec-Fetch-Site": "same-origin" } });
+    assert.equal(sameOrigin.status, 200);
+    const noHeader = await fetch(`${base}/api/runs`);
+    assert.equal(noHeader.status, 200);
+    assert.equal(server.exitCode, null, "server survived malformed and cross-site requests");
+  } finally {
+    const exited = once(server, "exit");
+    server.kill();
+    await exited;
+  }
+});
