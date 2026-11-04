@@ -24,6 +24,7 @@
     "test:engine": "tsx --test src/engine/*.test.ts",
     "test:data": "tsx --test src/data/*.test.ts",
     "test:analytics": "tsx --test src/analytics/*.test.ts",
+    "test:resample": "tsx --test src/resample/*.test.ts",
     "test:verify": "tsx --test src/verify/*.test.ts",
     "typecheck": "tsc --noEmit && pnpm typecheck:web"
   },
