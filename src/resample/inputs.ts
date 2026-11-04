@@ -38,6 +38,10 @@ export type TradeRecord = {
   size: bigint;
   entryPrice: bigint;
   exitPrice: bigint;
+  /** Components of net PnL, kept so audit re-pricing stays exact. */
+  funding: bigint;
+  fee: bigint;
+  gas: bigint;
   /** The closing execution's index in the run. */
   seq: number;
 };
@@ -161,6 +165,9 @@ export function extractTrades(trades: readonly ClosedTrade[], opts: ExtractOptio
       size: trade.size,
       entryPrice: trade.entryPrice,
       exitPrice: trade.exitPrice,
+      funding: trade.funding,
+      fee: trade.fee,
+      gas: trade.gas,
       seq: trade.seq,
     });
   }
