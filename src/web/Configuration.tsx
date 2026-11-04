@@ -6,12 +6,15 @@ type Fields = {
   market: string; side: 'long' | 'short'; size: string; cash: string; windowMode: 'days' | 'custom'; days: string;
   from: string; to: string; intrabar: boolean; fillModel: RequestDTO['fillModel']; profile: RequestDTO['fillProfile'];
   latency: string; gas: string; strategy: 'fixed' | 'sma'; fast: string; slow: string;
+  resample: boolean; resampleSeed: string; resamplePaths: string;
+  resampleMode: 'both' | 'shuffle_without_replacement' | 'bootstrap_with_replacement';
+  resampleSizing: 'static' | 'compound';
 };
 export function Configuration({ busy, error, onError, onRun, onRetry, mobile, open, hasResults, onEdit, onShowResults }: {
   mobile: boolean; open: boolean; hasResults: boolean; onEdit: () => void; onShowResults: () => void;
   busy: boolean; error: string | null; onError: (message: string) => void; onRun: (body: RequestDTO) => void; onRetry: () => void;
 }) {
-  const [fields, setFields] = useState<Fields>({ market: 'BTC', side: 'long', size: '0.01', cash: '1000', windowMode: 'days', days: '14', from: '', to: '', intrabar: true, fillModel: 'tape', profile: 'realistic', latency: '1', gas: '0', strategy: 'fixed', fast: '6', slow: '24' });
+  const [fields, setFields] = useState<Fields>({ market: 'BTC', side: 'long', size: '0.01', cash: '1000', windowMode: 'days', days: '14', from: '', to: '', intrabar: true, fillModel: 'tape', profile: 'realistic', latency: '1', gas: '0', strategy: 'fixed', fast: '6', slow: '24', resample: false, resampleSeed: '', resamplePaths: '1000', resampleMode: 'both', resampleSizing: 'static' });
   const [markets, setMarkets] = useState<Market[]>([]);
   const sizeTouched = useRef(false);
   const decimals = useRef<Partial<Record<'size' | 'cash' | 'gas', HTMLInputElement | null>>>({});
@@ -58,6 +61,17 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
       if (!fields.from || !fields.to) { onError('Choose both a start and an end date.'); return; }
       body.from = fields.from; body.to = fields.to;
     } else body.days = Number(fields.days);
+    if (fields.resample) {
+      body.resample = {
+        seed: fields.resampleSeed.trim(),
+        paths: Number(fields.resamplePaths),
+        mode: fields.resampleMode,
+        sizing: fields.resampleSizing,
+        horizonTrades: null,
+        acceptedLoss: null,
+        holdbackFraction: 0.3,
+      };
+    }
     onRun(body);
   }
   return <section className="panel configuration" aria-labelledby="config-title">
@@ -91,6 +105,16 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
         <div id="sma-fields" hidden={fields.strategy !== 'sma'}>
           <label htmlFor="fast">Fast window <span>bars</span></label><input id="fast" name="fast" type="number" min="1" max="200" step="1" value={fields.fast} onChange={e => set('fast', e.target.value)} />
           <label htmlFor="slow">Slow window <span>bars</span></label><input id="slow" name="slow" type="number" min="2" max="400" step="1" value={fields.slow} onChange={e => set('slow', e.target.value)} />
+        </div>
+      </fieldset>
+      <fieldset id="resample-fields" disabled={busy}>
+        <legend className="field-legend">Trade-order resampling (optional)</legend>
+        <label className="checkbox"><input id="resample" name="resample" type="checkbox" checked={fields.resample} onChange={e => set('resample', e.target.checked)} /><span>Add resampling analysis<small>Distribution, optimism audit, sizing odds and an out-of-sample boundary over this run&apos;s trade list.</small></span></label>
+        <div id="resample-options" hidden={!fields.resample}>
+          <label htmlFor="resample-seed">Seed <span>blank derives one from the run id</span></label><input id="resample-seed" name="resampleSeed" type="text" value={fields.resampleSeed} onChange={e => set('resampleSeed', e.target.value)} />
+          <label htmlFor="resample-paths">Paths <span>10–20,000</span></label><input id="resample-paths" name="resamplePaths" type="number" min="10" max="20000" step="1" value={fields.resamplePaths} onChange={e => set('resamplePaths', e.target.value)} required />
+          <label htmlFor="resample-mode">Draw</label><select id="resample-mode" name="resampleMode" value={fields.resampleMode} onChange={e => set('resampleMode', e.target.value as Fields['resampleMode'])}><option value="both">Shuffle + bootstrap (compare both)</option><option value="shuffle_without_replacement">Shuffle without replacement</option><option value="bootstrap_with_replacement">Bootstrap with replacement</option></select>
+          <label htmlFor="resample-sizing">Sizing</label><select id="resample-sizing" name="resampleSizing" value={fields.resampleSizing} onChange={e => set('resampleSizing', e.target.value as Fields['resampleSizing'])}><option value="static">Static size per trade</option><option value="compound">Compound (reinvest within a cap)</option></select>
         </div>
       </fieldset>
       <button id="run" className="primary" type="submit" disabled={busy}><span id="run-label">{busy ? 'Running simulation…' : 'Run backtest'}</span><span aria-hidden="true">↗</span></button>

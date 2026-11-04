@@ -1,12 +1,16 @@
 import type { listMarkets, runModel, runBacktest, RunRequest } from '../backtest-api.js';
 import type { metricsView } from '../analytics/metrics.js';
+import type { ResampleAnalysis } from '../resample/analysis.js';
 
 type ModelResult = Awaited<ReturnType<typeof runModel>>;
 type LegacyResult = Awaited<ReturnType<typeof runBacktest>>;
+export type InvariantDTO = { id: string; status: 'pass' | 'fail' | 'skip'; severity: string; detail: string };
+export type ResampleBlock = Omit<ResampleAnalysis, 'invariants'> & { invariants: InvariantDTO[] };
 export type Result = Omit<LegacyResult, 'entryPrice' | 'from' | 'to'> & {
   entryPrice: string | null; from: number; to: number;
   analytics?: ReturnType<typeof metricsView> & ModelResult['analytics'];
-} & Partial<Omit<ModelResult, keyof LegacyResult | 'analytics'>>;
+  resample?: ResampleBlock;
+} & Partial<Omit<ModelResult, keyof LegacyResult | 'analytics' | 'resample'>>;
 export type Market = Awaited<ReturnType<typeof listMarkets>>[number];
 export type RequestDTO = Omit<RunRequest, 'days' | 'from' | 'to'> & { days?: number; from?: string; to?: string };
 export const decimal = /^-?\d+(?:\.\d+)?$/;
@@ -41,7 +45,37 @@ export function validateResponse(data: unknown): Result {
   for (const key of ['analytics', 'attribution', 'manifest']) {
     if (data[key] !== undefined && !record(data[key])) throw new Error(`The result contains ${key === 'manifest' ? 'an invalid manifest' : `invalid ${key}`}.`);
   }
+  if (data.resample !== undefined) validateResample(data.resample);
   return data as Result;
+}
+
+const dec = (value: unknown): value is string => typeof value === 'string' && decimal.test(value) && Number.isFinite(Number(value));
+
+/** Validate the optional resample analysis block before it enters UI state. */
+export function validateResample(value: unknown): ResampleBlock {
+  if (!record(value) || value.version !== 1 || !record(value.meta) || !record(value.input)) throw new Error('The result contains an invalid resample analysis.');
+  const meta = value.meta;
+  if (typeof meta.seed !== 'string' || !Number.isInteger(meta.paths) || typeof meta.mode !== 'string' || typeof meta.sizing !== 'string' || !record(meta.source) || typeof meta.createdAt !== 'string') throw new Error('The resample analysis has invalid metadata.');
+  if (!Array.isArray(value.assumptions) || !value.assumptions.every((a: unknown) => typeof a === 'string')) throw new Error('The resample analysis has invalid assumptions.');
+  if (!Array.isArray(value.distributions)) throw new Error('The resample analysis has no distributions.');
+  for (const dist of value.distributions as unknown[]) {
+    if (!record(dist) || typeof dist.mode !== 'string' || !Number.isInteger(dist.paths) || !Array.isArray(dist.finalEquities)) throw new Error('The resample analysis has an invalid distribution.');
+    for (const key of ['median', 'p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95', 'cvar95', 'bankruptcyRate'] as const) if (!dec(dist[key])) throw new Error(`The resample distribution has an invalid ${key}.`);
+    if (!(dist.finalEquities as unknown[]).every(dec)) throw new Error('The resample distribution has invalid final equities.');
+    if (!Array.isArray(dist.fan) || !(dist.fan as unknown[]).every(band => record(band) && Number.isInteger(band.step) && dec(band.p10) && dec(band.p25) && dec(band.p50) && dec(band.p75) && dec(band.p90))) throw new Error('The resample distribution has an invalid fan.');
+  }
+  if (!record(value.audit) || !Array.isArray(value.audit.repricedFinalEquities) || !(value.audit.repricedFinalEquities as unknown[]).every(dec) || !Array.isArray(value.audit.notes)) throw new Error('The resample analysis has an invalid audit block.');
+  if (!record(value.sizing) || !Array.isArray(value.sizing.rows)) throw new Error('The resample analysis has an invalid sizing block.');
+  for (const row of value.sizing.rows as unknown[]) {
+    if (!record(row) || !dec(row.sizeBase) || !dec(row.lossProbability) || !dec(row.medianPnl) || !dec(row.p05Pnl)) throw new Error('The resample sizing ladder has an invalid row.');
+  }
+  if (value.oos !== null && (!record(value.oos) || !dec(value.oos.boundary) || !Array.isArray(value.oos.heldCurve) || !(value.oos.heldCurve as unknown[]).every(dec))) throw new Error('The resample analysis has an invalid out-of-sample block.');
+  if (!Array.isArray(value.warnings) || !value.warnings.every((w: unknown) => typeof w === 'string')) throw new Error('The resample analysis has invalid warnings.');
+  if (!Array.isArray(value.invariants)) throw new Error('The resample analysis has no invariants.');
+  for (const item of value.invariants as unknown[]) {
+    if (!record(item) || typeof item.id !== 'string' || typeof item.status !== 'string' || !['pass', 'fail', 'skip'].includes(item.status) || typeof item.detail !== 'string') throw new Error('The resample analysis has an invalid invariant.');
+  }
+  return value as unknown as ResampleBlock;
 }
 
 export const date = (t: number) => new Date(t * 1000).toLocaleString(undefined, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' UTC';

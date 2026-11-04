@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Chart } from './Chart.js';
 import { Details } from './Details.js';
+import { ResamplePanel } from './Resample.js';
 import { amount, date, day, describeModel, number, type Result } from './dto.js';
 import type { HistoryEntry } from './history.js';
 
@@ -65,7 +66,8 @@ export function Results({ data, busy, badge, activity, exportReady, onExport, hi
       <article className="panel metric"><h4>Markout 1 h</h4><strong id="markout">{a?.markout1hBps != null ? `${number(Number(a.markout1hBps), 1)} bps` : '—'}</strong><small>After each fill, favourable = positive</small></article>
     </div>
     <Details data={data} />
-    <section id="compare" className="panel compare" hidden={history.length < 2}><div className="panel-heading"><h3>Run comparison</h3><button id="compare-clear" type="button" className="text-button" onClick={onClear}>Clear history</button></div><p className="muted">Kept in this browser only. Each row is one finished run.</p><ul id="compare-list">{history.map(entry => <li key={entry.runId} className={entry.runId === data?.manifest?.runId ? 'current' : undefined}><span>{`${entry.market} · ${entry.strategy} · ${entry.fillModel}${entry.profile ? `/${entry.profile}` : ''} · ${day(entry.from)}–${day(entry.to)}`}</span><span>{`${amount(entry.equityEnd)} (${Number(entry.pnl) >= 0 ? '+' : ''}${amount(entry.pnl)})`}</span></li>)}</ul></section>
+    {data?.resample && <ResamplePanel data={data} />}
+    <section id="compare" className="panel compare" hidden={history.length < 2}><div className="panel-heading"><h3>Run comparison</h3><button id="compare-clear" type="button" className="text-button" onClick={onClear}>Clear history</button></div><p className="muted">Kept in this browser only. Each row is one finished run.</p><ul id="compare-list">{history.map(entry => <li key={entry.runId} className={entry.runId === data?.manifest?.runId ? 'current' : undefined}><span>{`${entry.market} · ${entry.strategy} · ${entry.fillModel}${entry.profile ? `/${entry.profile}` : ''} · ${day(entry.from)}–${day(entry.to)}`}</span><span>{entry.maxDrawdown != null ? `DD ${amount(entry.maxDrawdown)}% · ` : ''}{entry.sharpe != null ? `Sharpe ${number(entry.sharpe)} · ` : ''}{entry.winRate != null ? `Win ${(Number(entry.winRate) * 100).toFixed(1)}% · ` : ''}{`${amount(entry.equityEnd)} (${Number(entry.pnl) >= 0 ? '+' : ''}${amount(entry.pnl)})`}</span></li>)}</ul></section>
     <Coverage data={data} />
   </section>;
 }

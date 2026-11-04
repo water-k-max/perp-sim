@@ -1,6 +1,6 @@
 import { record, type Result } from './dto.js';
 const HISTORY_KEY = 'nova-run-history';
-export type HistoryEntry = { runId: string; market: string; from: number; to: number; fillModel: string; profile: string | null; strategy: string; equityEnd: string; pnl: string; status: string; at: string };
+export type HistoryEntry = { runId: string; market: string; from: number; to: number; fillModel: string; profile: string | null; strategy: string; equityEnd: string; pnl: string; status: string; at: string; sharpe?: string | null; winRate?: string | null; maxDrawdown?: string | null };
 function history(): HistoryEntry[] {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
@@ -13,6 +13,9 @@ export function rememberRun(data: Result): HistoryEntry[] {
     runId: data.manifest.runId, market: data.market, from: data.from, to: data.to,
     fillModel: data.model ? data.model.fillModel : 'settlement-mark', profile: data.model ? data.model.profile : null,
     strategy: data.strategy ? data.strategy.id : 'fixed', equityEnd: data.equityEnd, pnl: data.pnl, status: data.status, at: new Date().toISOString(),
+    sharpe: data.analytics?.sharpe != null ? String(data.analytics.sharpe) : null,
+    winRate: data.analytics?.winRateBps != null ? String(Number(data.analytics.winRateBps) / 10_000) : null,
+    maxDrawdown: data.maxDrawdownPct,
   };
   const list = history().filter(r => r.runId !== entry.runId);
   list.unshift(entry);

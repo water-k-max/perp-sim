@@ -46,3 +46,16 @@ tbody tr:hover{background:#131d30}
   .mobile-setup-controls button{min-height:44px;padding:10px 14px}
   .configuration input,.configuration select{scroll-margin-top:150px}
 }
+
+/* Trade-order resampling */
+.resample .panel-heading code{font-family:ui-monospace,monospace;font-size:11px;background:#101a2b;border:1px solid var(--border);border-radius:4px;padding:2px 5px}
+.resample-controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:10px 0 14px}
+.resample-controls label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px}
+.resample-controls input{max-width:280px}
+.resample-mode{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.resample-histograms{display:flex;gap:24px;flex-wrap:wrap;margin-top:8px}
+.resample-histogram svg{display:block}
+.resample-histogram figcaption{font-size:11px;margin-top:4px}
+.resample h4{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px}
+.resample .metrics{margin:12px 0}
+.resample [role=tabpanel]{min-height:0}
