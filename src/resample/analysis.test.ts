@@ -65,7 +65,7 @@ test("parseResampleRequest validates and caps", () => {
   assert.throws(() => parseResampleRequest({ holdbackFraction: 1 }), /\(0, 1\)/);
   assert.throws(() => parseResampleRequest({ acceptedLoss: "-1" }), /positive decimal/);
   const full = parseResampleRequest({ seed: "s", paths: 500, mode: "shuffle_without_replacement", sizing: "compound", horizonTrades: 50, acceptedLoss: "10.5", holdbackFraction: 0.25 });
-  assert.deepEqual(full, { seed: "s", paths: 500, mode: "shuffle_without_replacement", sizing: "compound", horizonTrades: 50, acceptedLoss: "10.5", holdbackFraction: 0.25 });
+  assert.deepEqual(full, { seed: "s", paths: 500, mode: "shuffle_without_replacement", sizing: "compound", horizonTrades: 50, acceptedLoss: "10.5", holdbackFraction: 0.25, prop: null });
 });
 
 test("default seed is a stable hash of the run id", () => {
@@ -121,4 +121,31 @@ test("warnings carry the modelled-distribution honesty lines", () => {
   const a = buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 100 }) }));
   assert.ok(a.warnings.some(w => /not a forecast/.test(w)));
   assert.ok(a.warnings.some(w => /paths is a small sample/.test(w)));
+});
+
+const PROP_FORM = { dailyLossLimit: "5", drawdownLimit: "50", phases: [{ profitTarget: "1" }] };
+
+function propInputs(seed: string): AnalysisInputs {
+  const base = inputs();
+  // Spread the trades across distinct UTC days so evaluations differ per seed.
+  base.list = {
+    ...base.list,
+    trades: base.list.trades.map((t, i) => ({ ...t, entryTs: (i + 1) * 86_400 + 100, exitTs: (i + 1) * 86_400 + 1000 })),
+  };
+  base.request = parseResampleRequest({ seed, paths: 64, prop: PROP_FORM });
+  return base;
+}
+
+test("prop block is absent by default and present, deterministic, when requested", () => {
+  assert.equal(buildResampleAnalysis(inputs()).prop, null);
+  const a = buildResampleAnalysis(propInputs("s"));
+  const b = buildResampleAnalysis(propInputs("s"));
+  assert.deepEqual(a.prop, b.prop);
+  assert.equal(a.prop!.dayCount, 12);
+  assert.equal(a.prop!.outcomes.length, 6);
+  const shareSum = a.prop!.outcomes.reduce((sum, o) => sum + Number(o.share), 0);
+  assert.ok(Math.abs(shareSum - 1) < 0.001);
+  assert.ok(a.prop!.notes.some(n => /predicts nothing/.test(n)));
+  const seeded = buildResampleAnalysis(propInputs("t"));
+  assert.notDeepEqual(seeded.prop, a.prop);
 });

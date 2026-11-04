@@ -16,6 +16,7 @@ import { isResampleMode, type ResampleMode } from "./sample.js";
 import { auditTradeList, assumptionLines, type RunAssumptions } from "./audit.js";
 import { simulateSizing } from "./sizing.js";
 import { runOos } from "./oos.js";
+import { aggregateTradeDays, parsePropRules, simulatePropEvaluation, type PropRules } from "./prop.js";
 import type { TradeList } from "./inputs.js";
 
 export type ResampleModeSelection = ResampleMode | "both";
@@ -31,6 +32,8 @@ export type ResampleRequest = {
   acceptedLoss: string | null;
   /** Fraction of the tail held back; null = no OOS block. */
   holdbackFraction: number | null;
+  /** Prop-evaluation rules form (spec §9); null = no prop block. */
+  prop: PropRules | null;
 };
 
 export const RESAMPLE_PATHS_MIN = 10;
@@ -42,7 +45,7 @@ export function defaultResampleSeed(runId: string): string {
 
 export function parseResampleRequest(value: unknown): ResampleRequest {
   if (value === undefined || value === null) {
-    return { seed: "", paths: 1000, mode: "both", sizing: "static", horizonTrades: null, acceptedLoss: null, holdbackFraction: 0.3 };
+    return { seed: "", paths: 1000, mode: "both", sizing: "static", horizonTrades: null, acceptedLoss: null, holdbackFraction: 0.3, prop: null };
   }
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("resample must be an object.");
   const v = value as Record<string, unknown>;
@@ -68,7 +71,8 @@ export function parseResampleRequest(value: unknown): ResampleRequest {
   if (holdbackFraction !== null && !(typeof holdbackFraction === "number" && holdbackFraction > 0 && holdbackFraction < 1)) {
     throw new Error("resample holdbackFraction must be in (0, 1).");
   }
-  return { seed, paths: Number(paths), mode, sizing: sizing as SizingMode, horizonTrades, acceptedLoss, holdbackFraction };
+  const prop = v.prop === undefined || v.prop === null ? null : parsePropRules(v.prop);
+  return { seed, paths: Number(paths), mode, sizing: sizing as SizingMode, horizonTrades, acceptedLoss, holdbackFraction, prop };
 }
 
 export type DistributionBlock = {
@@ -143,6 +147,19 @@ export type ResampleAnalysis = {
     notes: string[];
   } | null;
   warnings: string[];
+  /** Prop-evaluation replay of the strategy's own trading days (spec §9); null when not requested. */
+  prop: {
+    rules: PropRules;
+    dayCount: number;
+    daysWithMissingExcursion: number;
+    outcomes: { outcome: string; count: number; share: string }[];
+    fundedShare: string;
+    tradesToFund: { median: string; p05: string; p95: string } | null;
+    medianDaysToFund: number | null;
+    expectedResets: string | null;
+    payouts: { cadence: string; feeBps: number; average: string; bad: string } | null;
+    notes: string[];
+  } | null;
 };
 
 function f6(value: number): string {
@@ -261,6 +278,41 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
     quoteScale: inputs.quoteScale,
   });
 
+  const prop = request.prop === null || list.trades.length === 0 ? null : (() => {
+    const start = request.prop.startingBalance === null
+      ? inputs.start
+      : toRaw(request.prop.startingBalance, inputs.quoteDecimals);
+    const result = simulatePropEvaluation({
+      days: aggregateTradeDays(list.trades),
+      rules: request.prop,
+      seed,
+      paths: request.paths,
+      start,
+      toRaw: (decimal) => toRaw(decimal, inputs.quoteDecimals),
+    });
+    return {
+      rules: result.rules,
+      dayCount: result.dayCount,
+      daysWithMissingExcursion: result.daysWithMissingExcursion,
+      outcomes: result.outcomes.map((o) => ({ outcome: o.outcome, count: o.count, share: o.share.toFixed(4) })),
+      fundedShare: result.fundedShare.toFixed(4),
+      tradesToFund: result.tradesToFund === null ? null : {
+        median: f6(result.tradesToFund.median),
+        p05: f6(result.tradesToFund.p05),
+        p95: f6(result.tradesToFund.p95),
+      },
+      medianDaysToFund: result.medianDaysToFund,
+      expectedResets: result.expectedResets === null ? null : f6(result.expectedResets),
+      payouts: result.payouts === null ? null : {
+        cadence: result.payouts.cadence,
+        feeBps: result.payouts.feeBps,
+        average: fromRaw(result.payouts.average, inputs.quoteDecimals),
+        bad: fromRaw(result.payouts.bad, inputs.quoteDecimals),
+      },
+      notes: result.notes,
+    };
+  })();
+
   const warnings: string[] = [];
   warnings.push("Distributions model trade-order risk on the recorded trade list; they are not a forecast of future PnL.");
   if (inputs.list.sameBarCount > 0) {
@@ -332,5 +384,6 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
       notes: oos.notes,
     },
     warnings,
+    prop,
   };
 }

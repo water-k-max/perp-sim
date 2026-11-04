@@ -278,3 +278,10 @@ deterministic for hashing.
    checked for no-lookahead from the artifact alone; exposing the seqs lets the
    `oos-no-lookahead` invariant verify disjointness and ordering from the stored document.
    Nothing else in the shape changes.
+6. **Additive prop block (Phase 8).** The §11 document gains an optional `prop` block when
+   (and only when) the request carries a prop rules form. It replays aggregated trading
+   days (UTC-day PnL plus an observed-excursion intraday low) against typed-in rules;
+   intraday breach odds are estimated from observed excursions, never worse, and idle is
+   not estimable from trading days alone so its share stays zero and says so. A
+   `prop-bounds` invariant checks outcome shares sum to one and payouts exist exactly
+   when some path funds.

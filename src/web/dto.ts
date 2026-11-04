@@ -70,6 +70,17 @@ export function validateResample(value: unknown): ResampleBlock {
     if (!record(row) || !dec(row.sizeBase) || !dec(row.lossProbability) || !dec(row.medianPnl) || !dec(row.p05Pnl)) throw new Error('The resample sizing ladder has an invalid row.');
   }
   if (value.oos !== null && (!record(value.oos) || !dec(value.oos.boundary) || !Array.isArray(value.oos.heldCurve) || !(value.oos.heldCurve as unknown[]).every(dec))) throw new Error('The resample analysis has an invalid out-of-sample block.');
+  if (value.prop !== null && value.prop !== undefined) {
+    const prop = value.prop;
+    if (!record(prop) || !record(prop.rules) || !Number.isInteger(prop.dayCount) || !Array.isArray(prop.outcomes) || !Array.isArray(prop.notes)) throw new Error('The resample analysis has an invalid prop-evaluation block.');
+    for (const o of prop.outcomes as unknown[]) {
+      if (!record(o) || typeof o.outcome !== 'string' || !Number.isInteger(o.count) || !dec(o.share)) throw new Error('The prop-evaluation block has an invalid outcome.');
+    }
+    if (!dec(prop.fundedShare)) throw new Error('The prop-evaluation block has an invalid funded share.');
+    if (prop.tradesToFund !== null && (!record(prop.tradesToFund) || !dec(prop.tradesToFund.median) || !dec(prop.tradesToFund.p05) || !dec(prop.tradesToFund.p95))) throw new Error('The prop-evaluation block has an invalid trades-to-fund distribution.');
+    if (prop.expectedResets !== null && !dec(prop.expectedResets)) throw new Error('The prop-evaluation block has an invalid reset expectation.');
+    if (prop.payouts !== null && (!record(prop.payouts) || typeof prop.payouts.cadence !== 'string' || !Number.isInteger(prop.payouts.feeBps) || !dec(prop.payouts.average) || !dec(prop.payouts.bad))) throw new Error('The prop-evaluation block has invalid payouts.');
+  }
   if (!Array.isArray(value.warnings) || !value.warnings.every((w: unknown) => typeof w === 'string')) throw new Error('The resample analysis has invalid warnings.');
   if (!Array.isArray(value.invariants)) throw new Error('The resample analysis has no invariants.');
   for (const item of value.invariants as unknown[]) {
