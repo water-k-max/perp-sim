@@ -6,6 +6,7 @@ import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { listDatasets } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
+import { resampleStoredRun } from "../resample/service.js";
 import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, readJson, SECURITY_HEADERS } from "./http-kit.js";
 
 if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("NOVA Backtest Lab requires Node.js 22 or newer. Update the Node runtime on PATH before running pnpm dev.");
@@ -49,6 +50,27 @@ createServer(async (req, res) => {
       }
     } finally {
       flight.release();
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/resample") {
+    if (!originAllowed(req, port)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
+    if (!req.headers["content-type"]?.startsWith("application/json")) { json(res, 415, { error: "Send JSON configuration." }); return; }
+    let body: unknown;
+    try { body = await readJson(req, 8192); }
+    catch (error) {
+      json(res, error instanceof BodyTooLarge ? 413 : 400, { error: error instanceof BodyTooLarge ? "Configuration is too large." : "Could not read request." });
+      return;
+    }
+    const runId = body && typeof body === "object" ? (body as Record<string, unknown>).runId : undefined;
+    if (typeof runId !== "string" || !/^[a-f0-9]{64}$/.test(runId)) { json(res, 400, { error: "A full run digest is required." }); return; }
+    try {
+      const outcome = await resampleStoredRun(runId, (body as Record<string, unknown>).resample);
+      json(res, 200, { runId, resample: { ...outcome.analysis, invariants: outcome.invariants } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Resampling failed.";
+      json(res, /No saved run/.test(message) ? 404 : 400, { error: message });
     }
     return;
   }

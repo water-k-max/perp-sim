@@ -2,6 +2,8 @@ import type { Coverage } from "../history/bars.js";
 import type { RunResult } from "../engine/loop.js";
 import { hashRun } from "../engine/loop.js";
 import { attribute } from "../analytics/attribution.js";
+import { sha256 } from "../data/store.js";
+import { buildResampleAnalysis, type AnalysisInputs, type ResampleAnalysis } from "../resample/analysis.js";
 
 /**
  *  What a run must satisfy to be trusted, stated once and checked mechanically.
@@ -140,4 +142,72 @@ export function checkRun(run: RunResult, extras: { coverage?: Coverage } = {}): 
 
 export function invariantsOk(list: readonly Invariant[]): boolean {
   return list.every((i) => i.status !== "fail");
+}
+
+/**
+ *  Invariants over a resample analysis document (spec §11). Determinism is checked by
+ *  rebuilding the document from the same inputs and demanding a bit-identical value; the
+ *  bounds and no-lookahead checks are structural on the artifact itself, so a tampered
+ *  document fails even in isolation.
+ */
+export function checkResample(analysis: ResampleAnalysis, inputs: AnalysisInputs): Invariant[] {
+  const out: Invariant[] = [];
+  const verdict = (id: string, ok: boolean, severity: InvariantSeverity, detail: string): void => {
+    out.push({ id, status: ok ? "pass" : "fail", severity, detail });
+  };
+
+  const rerun = buildResampleAnalysis(inputs);
+  const recorded = sha256(analysis);
+  const rebuilt = sha256(rerun);
+  verdict(
+    "resample-deterministic",
+    recorded === rebuilt,
+    "error",
+    recorded === rebuilt
+      ? `analysis digest ${recorded.slice(0, 16)} reproduced exactly from the same inputs`
+      : `analysis digest ${recorded.slice(0, 16)} diverged from rebuild ${rebuilt.slice(0, 16)}`,
+  );
+
+  const bounds: string[] = [];
+  for (const dist of analysis.distributions) {
+    const rate = Number(dist.bankruptcyRate);
+    if (!(rate >= 0 && rate <= 1)) bounds.push(`${dist.mode} bankruptcyRate ${dist.bankruptcyRate} outside [0, 1]`);
+    if (!(Number(dist.cvar95) <= Number(dist.p05))) bounds.push(`${dist.mode} cvar95 ${dist.cvar95} exceeds p05 ${dist.p05}`);
+    for (const band of dist.fan) {
+      const ladder = [Number(band.p10), Number(band.p25), Number(band.p50), Number(band.p75), Number(band.p90)];
+      if (ladder.some((v, i) => i > 0 && v < ladder[i - 1]!)) bounds.push(`${dist.mode} fan step ${band.step} is not monotone`);
+    }
+  }
+  let prevProb = -1;
+  let prevSize: number | null = null;
+  for (const row of analysis.sizing.rows) {
+    const prob = Number(row.lossProbability);
+    if (!(prob >= 0 && prob <= 1)) bounds.push(`sizing lossProbability ${row.lossProbability} outside [0, 1]`);
+    if (prevProb > prob) bounds.push(`sizing lossProbability decreases from ${prevProb} to ${prob} up the ladder`);
+    const size = Number(row.sizeBase);
+    if (prevSize !== null && prevSize >= size) bounds.push(`sizing ladder not ascending at ${row.sizeBase}`);
+    prevProb = prob;
+    prevSize = size;
+  }
+  verdict("resample-bounds", bounds.length === 0, "error", bounds[0] ?? `bankruptcy, CVaR, fan and ladder ordering hold across ${analysis.distributions.length} distribution(s) and ${analysis.sizing.rows.length} sizing row(s)`);
+
+  if (analysis.oos === null) {
+    out.push({ id: "oos-no-lookahead", status: "skip", severity: "error", detail: "no out-of-sample block in this analysis" });
+  } else {
+    const { fitSeqs, heldSeqs, fitCount, heldCount, heldCurve } = analysis.oos;
+    const fit = new Set(fitSeqs);
+    const leak = heldSeqs.some((seq) => fit.has(seq));
+    const ordered = fitSeqs.every((a) => heldSeqs.every((b) => a < b));
+    const counts = fitCount + heldCount === analysis.input.tradeCount;
+    const curve = heldCurve.length === heldCount + 1;
+    verdict(
+      "oos-no-lookahead",
+      !leak && ordered && counts && curve,
+      "error",
+      !leak && ordered && counts && curve
+        ? `fit ${fitCount} trades all precede held ${heldCount}; held curve has ${heldCurve.length} points`
+        : `leak=${leak} ordered=${ordered} counts=${counts} (${fitCount}+${heldCount} vs ${analysis.input.tradeCount}) curve=${curve}`,
+    );
+  }
+  return out;
 }

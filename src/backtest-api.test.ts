@@ -69,3 +69,23 @@ test("strategy parameters stay scalars and fixed defaults keep the requested sid
   const fixed = parseRunRequest({ ...model, side: "short", strategy: { id: "fixed", params: { atBar: 3 } } });
   assert.equal(fixed.kind === "model" ? fixed.request.strategy.params.side : null, "short");
 });
+
+test("a resample block switches to the model path and parses with caps", () => {
+  const parsed = parseRunRequest({ ...valid, resample: { seed: "abc", paths: 500 } });
+  assert.equal(parsed.kind, "model");
+  if (parsed.kind !== "model") return;
+  assert.equal(parsed.request.resample?.seed, "abc");
+  assert.equal(parsed.request.resample?.paths, 500);
+  assert.equal(parsed.request.resample?.mode, "both");
+  for (const resample of [{ paths: 1 }, { paths: 20001 }, { mode: "x" }, { holdbackFraction: 0 }, { acceptedLoss: "-2" }, "nope", [1]]) {
+    assert.throws(() => parseRunRequest({ ...valid, resample }), Error);
+  }
+});
+
+test("identical resample requests parse to identical requests", () => {
+  const body = { ...valid, resample: { seed: "same", paths: 100, mode: "both", sizing: "compound", horizonTrades: 40, acceptedLoss: "5", holdbackFraction: 0.25 } };
+  const a = parseRunRequest(body);
+  const b = parseRunRequest(JSON.parse(JSON.stringify(body)));
+  assert.deepEqual(a, b);
+  if (a.kind === "model" && b.kind === "model") assert.deepEqual(a.request.resample, b.request.resample);
+});

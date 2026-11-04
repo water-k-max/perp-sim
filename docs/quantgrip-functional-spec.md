@@ -273,3 +273,8 @@ deterministic for hashing.
 4. **Charts.** No Plotly (heavyweight, violates the lean esbuild bundle); quantile bands
    render in the existing hand-rolled SVG chart component (it already handles axis gutter,
    resize observer, a11y titles).
+5. **Additive oos fields (implementation deviation, Phase 6).** The §11 `oos` block also
+   carries `fitSeqs` and `heldSeqs` (trade seqs per half). The spec's shape cannot be
+   checked for no-lookahead from the artifact alone; exposing the seqs lets the
+   `oos-no-lookahead` invariant verify disjointness and ordering from the stored document.
+   Nothing else in the shape changes.

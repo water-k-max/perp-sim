@@ -16,7 +16,10 @@ import { smaCross } from "./strategy/sma.js";
 import type { Strategy } from "./strategy/types.js";
 import { computeMetrics, markouts, metricsView, type Metrics } from "./analytics/metrics.js";
 import { attribute, attributionView, type Attribution } from "./analytics/attribution.js";
-import { checkRun, type Invariant } from "./verify/invariants.js";
+import { checkRun, checkResample, type Invariant } from "./verify/invariants.js";
+import { buildResampleAnalysis, parseResampleRequest, type AnalysisInputs, type ResampleAnalysis, type ResampleRequest } from "./resample/analysis.js";
+import { extractTrades, type TradeList } from "./resample/inputs.js";
+import type { TapeFill } from "./data/types.js";
 import { buildManifest, getCodeIdentity, type RunManifest } from "./runs/manifest.js";
 import { fromRaw, toRaw } from "./units.js";
 
@@ -56,12 +59,13 @@ export type RunRequest = Request & {
   fillProfile: FillProfile;
   latencySec: number;
   gasPerTx: string;
+  resample?: ResampleRequest;
 };
 
 export type ParsedRun = { kind: "legacy"; request: Request } | { kind: "model"; request: RunRequest };
 
 const MAX_WINDOW_SEC = 90 * 86_400;
-const NEW_FIELDS = ["from", "to", "fillModel", "fillProfile", "latencySec", "gasPerTx", "strategy"] as const;
+const NEW_FIELDS = ["from", "to", "fillModel", "fillProfile", "latencySec", "gasPerTx", "strategy", "resample"] as const;
 
 export function parseRunRequest(value: unknown): ParsedRun {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a backtest configuration.");
@@ -85,9 +89,11 @@ export function parseRunRequest(value: unknown): ParsedRun {
   const gasPerTx = v.gasPerTx ?? "0";
   if (typeof gasPerTx !== "string" || !/^\d{1,12}(\.\d{1,18})?$/.test(gasPerTx)) throw new Error("Gas must be a non-negative decimal.");
 
+  const resample = v.resample === undefined ? undefined : parseResampleRequest(v.resample);
+
   return {
     kind: "model",
-    request: { ...legacy, from, to, strategy: parseStrategy(v.strategy, legacy), fillModel, fillProfile: fillProfile as FillProfile, latencySec: Number(latencySec), gasPerTx },
+    request: { ...legacy, from, to, strategy: parseStrategy(v.strategy, legacy), fillModel, fillProfile: fillProfile as FillProfile, latencySec: Number(latencySec), gasPerTx, resample },
   };
 }
 
@@ -142,7 +148,26 @@ export type Replay = {
   size: bigint;
   cash: bigint;
   drawdownBps: bigint;
+  list: TradeList;
+  resample?: { analysis: ResampleAnalysis; invariants: Invariant[] };
 };
+
+/** Record every tape slice the engine consumes, so the resampler sees the same prints. */
+function recordTape(source: TapeSource): { source: TapeSource; fills: () => readonly TapeFill[] } {
+  const fills: TapeFill[] = [];
+  return {
+    fills: () => fills,
+    source: {
+      slice: async (fromSec, toSec) => {
+        const slice = await source.slice(fromSec, toSec);
+        fills.push(...slice.fills);
+        return slice;
+      },
+      consumed: () => source.consumed(),
+      digest: () => source.digest(),
+    },
+  };
+}
 
 /**
  *  Fetch the window, build the bars, resolve parameters per epoch and replay the strategy.
@@ -190,6 +215,7 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
   }
 
   const strategy = buildStrategy(input, size);
+  const recorded = tape ? recordTape(tape) : undefined;
   let result;
   try {
     result = await run({
@@ -201,12 +227,14 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
       fillProfile: input.fillProfile,
       latencySec: input.latencySec,
       gasPerTx: toRaw(input.gasPerTx, cfg.quoteDecimals),
-      tape,
+      tape: recorded?.source ?? tape,
       params: new ParameterTimeline(data.epochs, cfg),
     });
   } catch (error) {
     throw new BacktestInputError(error instanceof Error ? error.message : "The replay could not be completed.");
   }
+
+  const list = extractTrades(result.trades, { bars, tape: recorded?.fills() ?? [], oneBase: cfg.oneBase });
 
   const cov = coverage(bars);
   let peak = cash;
@@ -215,6 +243,40 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
     if (point.equity > peak) peak = point.equity;
     const dd = ((peak - point.equity) * 10_000n) / peak;
     if (dd > drawdownBps) drawdownBps = dd;
+  }
+
+  const manifest = await buildManifest({
+    cfg, data, model: result.model, strategy: result.strategy, tape, code: loadedCode,
+    effective: { cash, requestedSize: requested, size, fromSec: input.from, toSec: input.to, intrabar: input.intrabar, closeAtEnd: true, untilBar: bars.length - 1, side: input.side },
+  });
+
+  let resample: { analysis: ResampleAnalysis; invariants: Invariant[] } | undefined;
+  if (input.resample) {
+    const analysisInputs: AnalysisInputs = {
+      runId: manifest.runId,
+      list,
+      request: input.resample,
+      createdAt: manifest.capturedAt,
+      start: cash,
+      quoteDecimals: cfg.quoteDecimals,
+      baseDecimals: cfg.baseDecimals,
+      quoteScale: 10n ** BigInt(cfg.quoteDecimals),
+      oneBase: cfg.oneBase,
+      lotSize: cfg.lotSize,
+      maxSize: cfg.maxPositionSize,
+      markPrice: result.trail[result.trail.length - 1]?.mark ?? 0n,
+      effectiveImfBps: cfg.effectiveImfBps,
+      market: cfg.symbol,
+      assumptions: {
+        fillModel: result.model.fillModel,
+        profile: result.model.profile,
+        latencySec: result.model.latencySec,
+        gasPerTx: fromRaw(result.model.gasPerTx, cfg.quoteDecimals),
+        intrabar: input.intrabar,
+      },
+    };
+    const analysis = buildResampleAnalysis(analysisInputs);
+    resample = { analysis, invariants: checkResample(analysis, analysisInputs) };
   }
 
   await assertLoadedCode();
@@ -227,15 +289,14 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
     metrics: computeMetrics(result),
     attribution: attribute(result),
     invariants: checkRun(result, { coverage: cov }),
-    manifest: await buildManifest({
-      cfg, data, model: result.model, strategy: result.strategy, tape, code: loadedCode,
-      effective: { cash, requestedSize: requested, size, fromSec: input.from, toSec: input.to, intrabar: input.intrabar, closeAtEnd: true, untilBar: bars.length - 1, side: input.side },
-    }),
+    manifest,
     priceAt: candlePriceAt(data.candles3600, 3600),
     requested,
     size,
     cash,
     drawdownBps,
+    list,
+    resample,
   };
 }
 
@@ -278,7 +339,7 @@ export async function replaySavedRun(runId: string) {
 }
 
 function modelResponse(replay: Replay, input: RunRequest) {
-  const { cfg, data, bars, cov, result, metrics, attribution, invariants, manifest, priceAt, requested, size, cash, drawdownBps } = replay;
+  const { cfg, data, bars, cov, result, metrics, attribution, invariants, manifest, priceAt, requested, size, cash, drawdownBps, resample } = replay;
   const money = (n: bigint) => fromRaw(n, cfg.quoteDecimals);
   const funding = -(result.fundingSettled + result.fundingOpen);
   const fees = -(result.feesTaker + result.feesMaker);
@@ -396,6 +457,7 @@ function modelResponse(replay: Replay, input: RunRequest) {
     })),
     logs: result.logs,
     manifest: manifestView(manifest),
+    ...(resample ? { resample: { ...resample.analysis, invariants: resample.invariants } } : {}),
     eventHash: result.eventHash,
   };
 }
