@@ -250,42 +250,8 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
     effective: { cash, requestedSize: requested, size, fromSec: input.from, toSec: input.to, intrabar: input.intrabar, closeAtEnd: true, untilBar: bars.length - 1, side: input.side },
   });
 
-  let resample: { analysis: ResampleAnalysis; invariants: Invariant[] } | undefined;
-  if (input.resample) {
-    const analysisInputs: AnalysisInputs = {
-      runId: manifest.runId,
-      list,
-      request: input.resample,
-      createdAt: manifest.capturedAt,
-      start: cash,
-      quoteDecimals: cfg.quoteDecimals,
-      baseDecimals: cfg.baseDecimals,
-      quoteScale: 10n ** BigInt(cfg.quoteDecimals),
-      oneBase: cfg.oneBase,
-      lotSize: cfg.lotSize,
-      maxSize: cfg.maxPositionSize,
-      markPrice: result.trail[result.trail.length - 1]?.mark ?? 0n,
-      effectiveImfBps: cfg.effectiveImfBps,
-      market: cfg.symbol,
-      assumptions: {
-        fillModel: result.model.fillModel,
-        profile: result.model.profile,
-        latencySec: result.model.latencySec,
-        gasPerTx: fromRaw(result.model.gasPerTx, cfg.quoteDecimals),
-        intrabar: input.intrabar,
-      },
-    };
-    const analysis = buildResampleAnalysis(analysisInputs);
-    resample = { analysis, invariants: checkResample(analysis, analysisInputs) };
-  }
-
-  await assertLoadedCode();
-  return {
-    cfg,
-    data,
-    bars,
-    cov,
-    result,
+  const replay: Replay = {
+    cfg, data, bars, cov, result,
     metrics: computeMetrics(result),
     attribution: attribute(result),
     invariants: checkRun(result, { coverage: cov }),
@@ -296,7 +262,43 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
     cash,
     drawdownBps,
     list,
-    resample,
+    resample: undefined,
+  };
+  if (input.resample) {
+    const analysisInputs = resampleInputs(replay, input.resample, manifest, input.intrabar);
+    const analysis = buildResampleAnalysis(analysisInputs);
+    replay.resample = { analysis, invariants: checkResample(analysis, analysisInputs) };
+  }
+
+  await assertLoadedCode();
+  return replay;
+}
+
+/** The analysis inputs are rebuilt identically for live runs and frozen replays, so stored reports reproduce. */
+function resampleInputs(replay: Replay, request: ResampleRequest, manifest: RunManifest, intrabar: boolean): AnalysisInputs {
+  const { cfg, result, list, cash } = replay;
+  return {
+    runId: manifest.runId,
+    list,
+    request,
+    createdAt: manifest.capturedAt,
+    start: cash,
+    quoteDecimals: cfg.quoteDecimals,
+    baseDecimals: cfg.baseDecimals,
+    quoteScale: 10n ** BigInt(cfg.quoteDecimals),
+    oneBase: cfg.oneBase,
+    lotSize: cfg.lotSize,
+    maxSize: cfg.maxPositionSize,
+    markPrice: result.trail[result.trail.length - 1]?.mark ?? 0n,
+    effectiveImfBps: cfg.effectiveImfBps,
+    market: cfg.symbol,
+    assumptions: {
+      fillModel: result.model.fillModel,
+      profile: result.model.profile,
+      latencySec: result.model.latencySec,
+      gasPerTx: fromRaw(result.model.gasPerTx, cfg.quoteDecimals),
+      intrabar,
+    },
   };
 }
 
@@ -333,7 +335,15 @@ export async function replaySavedRun(runId: string) {
   const replay = await replayPrepared(snapshot.input, saved.manifest.configSnapshot, data, tape);
   if (replay.manifest.runId !== runId) throw new Error("Frozen replay identity changed: use the recorded source, dependencies and runtime.");
   if (sha256(replay.result) !== sha256(snapshot.result)) throw new Error("Frozen replay did not reproduce the recorded engine result.");
-  const response = modelResponse({ ...replay, manifest: saved.manifest }, snapshot.input);
+  // The stored report was built from the original manifest (its capturedAt feeds analysis metadata),
+  // so the response is rebuilt against that manifest, not the freshly replayed one.
+  const rebuilt: Replay = { ...replay, manifest: saved.manifest };
+  if (snapshot.input.resample) {
+    const analysisInputs = resampleInputs(rebuilt, snapshot.input.resample, saved.manifest, snapshot.input.intrabar);
+    const analysis = buildResampleAnalysis(analysisInputs);
+    rebuilt.resample = { analysis, invariants: checkResample(analysis, analysisInputs) };
+  }
+  const response = modelResponse(rebuilt, snapshot.input);
   if (sha256(response) !== sha256(saved.result)) throw new Error("Frozen replay did not reproduce the recorded report.");
   return response;
 }

@@ -65,6 +65,30 @@ test("saved report and engine reproduce without network; cash and intrabar chang
   await persistReplay(recaptured, input);
 });
 
+test("stored reports with a resample request replay byte-for-byte, including the prop block", async t => {
+  t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
+  const request: RunRequest = {
+    // A different cash changes the manifest config hash, so this run gets its own run id
+    // (identity does not cover the resample request itself).
+    ...input,
+    cash: "1500",
+    resample: {
+      seed: "repro-seed", paths: 64, mode: "both", sizing: "static", horizonTrades: null,
+      acceptedLoss: null, holdbackFraction: 0.3,
+      prop: {
+        startingBalance: null, drawdownMode: "trailing_eod", drawdownLocks: false,
+        dailyLossLimit: "50", drawdownLimit: "500",
+        phases: [{ profitTarget: "5", consistencyCapBps: null }],
+        payoutCadence: "one_time", payoutFeeBps: 500, maxDays: 30,
+      },
+    },
+  };
+  const replay = await replayPrepared(request, cfg, dataset());
+  const saved = await persistReplay(replay, request);
+  assert.ok(saved.result.resample, "the stored report carries the resample block");
+  assert.deepEqual(await replaySavedRun(replay.manifest.runId), saved.result);
+});
+
 test("frozen tape includes full contents, terminal close, and partial coverage", async t => {
   t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
   const data = dataset();

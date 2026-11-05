@@ -80,7 +80,7 @@ function closedTrades(): ClosedTrade[] {
   }));
 }
 
-async function savedRun() {
+async function savedRun(tape?: { consumed(): unknown[]; digest(): string }) {
   const data = marketData();
   const manifestInput: ManifestInput = {
     cfg: cfg(), data,
@@ -88,7 +88,7 @@ async function savedRun() {
     strategy: { id: "fixed", params: { size: "1", side: "long", atBar: 1 } },
     effective: { cash: 1_000_000_000n, requestedSize: E18, size: E18, fromSec: 1_000, toSec: 1_000 + 29 * 3_600, intrabar: false, closeAtEnd: true, untilBar: 29, side: "long" },
     code: { sourceHash: sha256("source"), sourceCommit: "unknown", runtime: "test" },
-    tape: undefined,
+    tape: tape as never,
   };
   const manifest = await buildManifest(manifestInput);
   const trades = closedTrades();
@@ -143,3 +143,19 @@ test("resampleStoredRun rebuilds the analysis offline and persists it by (runId,
   await assert.rejects(resampleStoredRun("0".repeat(64), { paths: 32 }), /No saved run/);
   await assert.rejects(resampleStoredRun(runId, { paths: 3 }), /\[10, 20000\]/);
 });
+
+test("tape-backed runs resample offline: stored payloads carry no digest field", async () => {
+  // Exactly the shape createTapeSource persists: writeSnapshot BEFORE the derived
+  // digest field is added, so the stored payload has no digest and the record's
+  // digest is the content hash of the digest-less payload.
+  const slice = { key: "tape-slice-key", fromSec: 1_000, toSec: 3_600, complete: true, fills: [{ id: "f1", t: 1_500, price: 100n * E18, quantity: E18, side: "buy" as const }] };
+  const digest = await writeSnapshot(slice);
+  const records = [{ key: slice.key, digest, fromSec: slice.fromSec, toSec: slice.toSec, fills: slice.fills.length, complete: slice.complete }];
+  const runId = await savedRun({ consumed: () => records, digest: () => "consumed-key" });
+  const result = await resampleStoredRun(runId, { seed: "tape-seed", paths: 32 });
+  assert.equal(result.analysis.input.tradeCount, 14);
+  assert.ok(result.invariants.every((i) => i.status !== "fail"));
+});
+// Tampered tape records never reach this service: buildManifest and saveRun both
+// verify record digests, and the runs-store tests pin that fail-closed behaviour.
+

@@ -4,7 +4,7 @@
  *  trade list rebuilds exactly and the analysis for a given (runId, seed) is reproducible.
  */
 
-import { readSnapshot } from "../data/store.js";
+import { readSnapshot, sha256 } from "../data/store.js";
 import type { MarketData } from "../data/types.js";
 import type { TapeSlice } from "../data/tape.js";
 import type { RunResult } from "../engine/loop.js";
@@ -37,8 +37,13 @@ export async function resampleStoredRun(runId: string, rawResample: unknown): Pr
 
   const tapeFills = [];
   for (const record of saved.manifest.tapeRecords) {
+    // Stored tape payloads carry no digest field (it is added only in the returned slice),
+    // so identity is verified against the record the same way createFrozenTapeSource does.
     const slice = await readSnapshot<TapeSlice>(record.digest);
-    if (slice.digest !== record.digest) throw new Error("Frozen tape slice identity mismatch.");
+    if (
+      slice.key !== record.key || slice.fromSec !== record.fromSec || slice.toSec !== record.toSec ||
+      slice.fills.length !== record.fills || slice.complete !== record.complete || sha256(slice) !== record.digest
+    ) throw new Error("Frozen tape slice identity mismatch.");
     tapeFills.push(...slice.fills);
   }
 
