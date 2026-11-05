@@ -8,10 +8,16 @@ import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
 import { forwardStoredRun, forwardTestJson } from "../forward/forward.js";
 import { resampleStoredRun } from "../resample/service.js";
-import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, readJson, SECURITY_HEADERS } from "./http-kit.js";
+import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, parsePublicOrigin, readJson, SECURITY_HEADERS } from "./http-kit.js";
 
 if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("NOVA Backtest Lab requires Node.js 22 or newer. Update the Node runtime on PATH before running pnpm dev.");
 const port = Number(process.env.PORT ?? 3000);
+let publicOrigin;
+try {
+  publicOrigin = parsePublicOrigin(process.env.PERP_SIM_PUBLIC_ORIGIN);
+} catch {
+  throw new Error("PERP_SIM_PUBLIC_ORIGIN must be a bare http(s) origin, e.g. https://example.trycloudflare.com.");
+}
 const assets: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.css": ["app.css", "text/css; charset=utf-8"],
@@ -24,11 +30,11 @@ const flight = new SingleFlight();
 createServer(async (req, res) => {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(key, value);
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-  if (!hostAllowed(req, port)) { json(res, 403, { error: "Local access only." }); return; }
+  if (!hostAllowed(req, port, publicOrigin)) { json(res, 403, { error: "Local access only." }); return; }
   if (url.pathname.startsWith("/api/") && !fetchSiteAllowed(req)) { json(res, 403, { error: "Cross-site requests are not allowed." }); return; }
 
   if (req.method === "POST" && url.pathname === "/api/backtest") {
-    if (!originAllowed(req, port)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
+    if (!originAllowed(req, port, publicOrigin)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
     if (!req.headers["content-type"]?.startsWith("application/json")) { json(res, 415, { error: "Send JSON configuration." }); return; }
     if (!flight.tryAcquire()) { json(res, 429, { error: "A replay is already running. Please wait and try again." }); return; }
     try {
@@ -56,7 +62,7 @@ createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/resample") {
-    if (!originAllowed(req, port)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
+    if (!originAllowed(req, port, publicOrigin)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
     if (!req.headers["content-type"]?.startsWith("application/json")) { json(res, 415, { error: "Send JSON configuration." }); return; }
     let body: unknown;
     try { body = await readJson(req, 8192); }
@@ -161,4 +167,4 @@ createServer(async (req, res) => {
   } catch {
     json(res, 500, { error: "Frontend asset unavailable." });
   }
-}).listen(port, "127.0.0.1", () => console.log(`NOVA Backtest Lab: http://localhost:${port} (read-only, local access)`));
+}).listen(port, "127.0.0.1", () => console.log(`NOVA Backtest Lab: http://localhost:${port} (read-only, local access${publicOrigin ? `, public origin ${publicOrigin.origin}` : ""})`));

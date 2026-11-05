@@ -17,15 +17,35 @@ export function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 
-/** Only the loopback names this server binds to are acceptable Host headers. */
-export function hostAllowed(req: IncomingMessage, port: number): boolean {
-  return ["127.0.0.1", "localhost", "[::1]"].some((host) => req.headers.host === `${host}:${port}`);
+/**
+ *  A deployment may serve this loopback server through exactly one extra origin, such as
+ *  an SSH or Cloudflare tunnel. It widens the same-origin definition only: the server
+ *  still binds loopback, still serves read-only routes, and still rejects every other
+ *  remote Host and Origin.
+ */
+export type PublicOrigin = { origin: string; hosts: string[] };
+
+export function parsePublicOrigin(value: string | undefined): PublicOrigin | null {
+  if (!value) return null;
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("not an http(s) URL");
+  if (url.pathname !== "/" && url.pathname !== "") throw new Error("an origin, not a path");
+  return {
+    origin: url.origin,
+    hosts: url.port ? [`${url.hostname}:${url.port}`, url.hostname] : [url.hostname],
+  };
+}
+
+/** Only the loopback names this server binds to are acceptable Host headers, plus the configured tunnel origin if any. */
+export function hostAllowed(req: IncomingMessage, port: number, publicOrigin: PublicOrigin | null = null): boolean {
+  return ["127.0.0.1", "localhost", "[::1]"].some((host) => req.headers.host === `${host}:${port}`) ||
+    (publicOrigin !== null && publicOrigin.hosts.includes(req.headers.host ?? ""));
 }
 
 /** A state-changing POST must come from the page this server served, or from no origin at all. */
-export function originAllowed(req: IncomingMessage, port: number): boolean {
+export function originAllowed(req: IncomingMessage, port: number, publicOrigin: PublicOrigin | null = null): boolean {
   if (!req.headers.origin) return true;
-  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`].includes(req.headers.origin);
+  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`, publicOrigin?.origin ?? null].includes(req.headers.origin);
 }
 
 /**

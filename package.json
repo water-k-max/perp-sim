@@ -12,7 +12,7 @@
     "dev": "pnpm build:web && tsx src/bin/web.ts",
     "build:web": "esbuild src/web/main.tsx --bundle --minify --format=iife --platform=browser --target=es2022 --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=dist/web/app.js",
     "typecheck:web": "tsc --project tsconfig.web.json --noEmit",
-    "test:web": "tsx --test src/backtest-api.test.ts src/backtest-repro.test.ts src/web/dto.test.ts src/web/fan.test.ts",
+    "test:web": "tsx --test src/bin/http-kit.test.ts src/backtest-api.test.ts src/backtest-repro.test.ts src/web/dto.test.ts src/web/fan.test.ts",
     "probe:markets": "tsx src/bin/probe-markets.ts",
     "backtest": "tsx src/bin/backtest.ts",
     "preflight": "tsx src/bin/preflight.ts",
