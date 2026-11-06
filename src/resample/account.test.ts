@@ -31,3 +31,17 @@ test("shuffle preserves the realized total on every path", () => {
   const out = resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
   assert.equal(out.realizedTotal, "6.000000");
 });
+test("distributions carry fan bands one step per trade", () => {
+  const out = resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
+  for (const dist of out.distributions) {
+    assert.equal(dist.fan.length, 4);
+    assert.equal(dist.fan[0]!.step, 0);
+    const last = dist.fan[dist.fan.length - 1]!;
+    assert.equal(last.step, 3);
+    for (const band of dist.fan) {
+      for (const key of ["p10", "p25", "p50", "p75", "p90"] as const) assert.ok(Number.isFinite(Number(band[key])));
+      assert.ok(Number(band.p10) <= Number(band.p25) && Number(band.p25) <= Number(band.p50)
+        && Number(band.p50) <= Number(band.p75) && Number(band.p75) <= Number(band.p90));
+    }
+  }
+});

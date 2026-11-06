@@ -5,7 +5,11 @@ import { fanGeometry, histogram, linePath, type Band } from './fan.js';
 const CYAN = '#60e2e9';
 const VIOLET = '#99b7ff';
 
-function FanChart({ block, quote, original }: { block: ResampleBlock; quote: string; original: { step: number; value: number }[] }) {
+export function FanChart({ dist, quote, original }: {
+  dist: { paths: number; fan: readonly { step: number; p10: string; p25: string; p50: string; p75: string; p90: string }[] };
+  quote: string;
+  original: { step: number; value: number }[];
+}) {
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(300);
   useEffect(() => {
@@ -17,8 +21,7 @@ function FanChart({ block, quote, original }: { block: ResampleBlock; quote: str
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const dist = block.distributions[0];
-  if (!dist) return <p className="muted">No trades to chart.</p>;
+  if (dist.fan.length === 0) return <p className="muted">No trades to chart.</p>;
   const fan = dist.fan.map(b => ({ step: b.step, p10: Number(b.p10), p25: Number(b.p25), p50: Number(b.p50), p75: Number(b.p75), p90: Number(b.p90) })) as Band[];
   const height = 240;
   const geometry = fanGeometry(fan, width, height, 44, width - 12, 14, height - 34);
@@ -26,7 +29,7 @@ function FanChart({ block, quote, original }: { block: ResampleBlock; quote: str
   const originalPath = linePath(original.filter(p => p.step <= last).map(p => ({ x: geometry.x(p.step), y: geometry.y(p.value) })));
   const tick = (geometry.low + (geometry.high - geometry.low) / 2);
   return <div ref={container}>
-    <div className="chart-legend"><span><i style={{ background: CYAN }} /> Resampled paths (p10–p90, p25–p75, median)</span><span><i style={{ background: VIOLET }} /> This run&apos;s trade order</span></div>
+    <div className="chart-legend"><span><i style={{ background: CYAN }} /> Resampled paths (p10–p90, p25–p75, median)</span>{original.length > 1 && <span><i style={{ background: VIOLET }} /> This run&apos;s trade order</span>}</div>
     <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`Equity fan over ${dist.paths} resampled paths in ${quote}`}>
       <line x1={44} x2={width - 12} y1={geometry.y(tick)} y2={geometry.y(tick)} stroke="#27334a" strokeDasharray="3 5" />
       <text x={36} y={geometry.y(tick) + 4} textAnchor="end">{number(tick, 0)}</text>
@@ -132,7 +135,7 @@ export function ResamplePanel({ data }: { data: Result }) {
     <div role="tabpanel" hidden={active !== 'distribution'}>
       {dists.length > 1 && <div className="segmented resample-mode">{dists.map(d => <label key={d.mode}><input type="radio" name="resample-mode" checked={mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode === 'shuffle_without_replacement' ? 'Shuffle (no replacement)' : 'Bootstrap (with replacement)'}</span></label>)}</div>}
       {dist && <>
-        <FanChart block={{ ...block, distributions: [dist] }} quote={data.quoteSymbol} original={original} />
+        <FanChart dist={dist} quote={data.quoteSymbol} original={original} />
         <div className="metrics">
           <Stat label="Median final" value={amount(dist.median)} title={`${dist.median} ${data.quoteSymbol}`} />
           <Stat label="p05 / p95" value={`${amount(dist.p05)} / ${amount(dist.p95)}`} />

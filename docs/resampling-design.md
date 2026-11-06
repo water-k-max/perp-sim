@@ -27,7 +27,7 @@ The tail of the list is held back. The earlier trades are bootstrapped and the 9
 Live fills are accumulated exactly and compared with the resampled band, counting how many fall inside or outside.
 
 ## Account resampling
-A public address's closing fills (chain-reported gross realized PnL) become the trade list, then shuffle and bootstrap run as above. Fees and funding are not deducted, and fewer than 30 trades is flagged as unstable.
+A public address's closing fills (chain-reported gross realized PnL) become the trade list, then shuffle and bootstrap run as above. Fees and funding are not deducted, and fewer than 30 trades is flagged as unstable. Each distribution carries the same per-step fan bands as the run panel, so the wallet panel draws the p10–p90 equity fan over trades.
 
 ## Honesty rules
 - Every result states what it cannot see.
