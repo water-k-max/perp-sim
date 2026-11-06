@@ -20,7 +20,7 @@ import { summarizePaths } from "./stats.js";
 export const DEFAULT_DISMISSAL_THRESHOLD_BPS = 5_000;
 
 export type RunAssumptions = {
-  fillModel: "tape" | "settlement-mark";
+  fillModel: "tape" | "settlement-mark" | "imported";
   profile: string | null;
   latencySec: number;
   gasPerTx: string;
@@ -60,6 +60,9 @@ export type AuditResult = {
 
 /** Assumption lines, one per quiet flatterer in the run config, each with its live consequence. */
 export function assumptionLines(config: RunAssumptions): string[] {
+  if (config.fillModel === "imported") {
+    return ["The trade list was imported: each PnL is taken as recorded, net of the importer's own fees and funding, and no fill model of ours prices any fill."];
+  }
   const lines: string[] = [];
   if (config.fillModel === "tape" && config.profile === "optimistic") {
     lines.push("Fill profile is optimistic (5 s window, 100% of recorded volume): live fills would arrive later and take a smaller share of the tape than every modelled fill assumes.");
@@ -109,7 +112,7 @@ export function repriceSameBarAdverse(trades: readonly TradeRecord[], oneBase: b
 export function auditTradeList(list: TradeList, config: RunAssumptions, opts: AuditOptions): AuditResult {
   const threshold = opts.dismissalThresholdBps ?? DEFAULT_DISMISSAL_THRESHOLD_BPS;
   const shareBps = sameBarShareBps(list);
-  const observed = config.fillModel === "tape";
+  const observed = config.fillModel !== "settlement-mark";
   const dismissed = !observed && shareBps >= threshold && list.trades.length > 0;
 
   const base = {
@@ -133,9 +136,14 @@ export function auditTradeList(list: TradeList, config: RunAssumptions, opts: Au
       : ((repricedSummary.medianFinalEquity - exportedSummary.medianFinalEquity) * 10_000) /
         Math.abs(exportedSummary.medianFinalEquity);
 
-  const notes: string[] = observed
-    ? ["Fills are recorded tape prints, so a short hold is priced on observed trades, not an assumed path. The same-bar share is holding-time context only: no verdict is applied and nothing is re-priced."]
-    : ["The same-bar count is what can be counted, not a bound: a longer trade whose final bar holds both stop and target has the same problem and cannot be seen here."];
+  const notes: string[] = config.fillModel === "imported"
+    ? ["The trade list was imported: the same-bar share says how finely the market history available here can resolve each holding window, not a verdict on the importer's fills. Nothing is re-priced."]
+    : observed
+      ? ["Fills are recorded tape prints, so a short hold is priced on observed trades, not an assumed path. The same-bar share is holding-time context only: no verdict is applied and nothing is re-priced."]
+      : ["The same-bar count is what can be counted, not a bound: a longer trade whose final bar holds both stop and target has the same problem and cannot be seen here."];
+  if (config.fillModel === "imported" && list.withoutExcursionCount > 0) {
+    notes.push(`${list.withoutExcursionCount} trade(s) carry no excursion data: no market history here covers their holding window.`);
+  }
   if (!observed && list.trades.some((t) => t.sameBar && t.excursionSource !== "none")) {
     notes.push("For same-bar trades the excursion is observed (candle path or tape prints), so the re-priced curve is a bounded worst-case for those trades, not a claim about what happened.");
   }

@@ -30,6 +30,13 @@ Live fills are accumulated exactly and compared with the resampled band, countin
 ## Account resampling
 A public address's closing fills (chain-reported gross realized PnL) become the trade list, then shuffle, bootstrap and block bootstrap run as above. Fees and funding are not deducted, and fewer than 30 trades is flagged as unstable. Each distribution carries the same per-step fan bands as the run panel, so the wallet panel draws the p10–p90 equity fan over trades.
 
+## Trade-list import
+A CSV or JSON trade list from any source can skip the engine entirely (`POST /api/trades/resample`, the "Import a trade list" panel). Required per trade: `side`, `entryTime`, `exitTime`, `pnl` — the PnL is taken exactly as recorded, net of whatever fees and funding the importer already paid, and never re-derived or re-priced. Optional columns: `size`, `entryPrice`, `fee`, `funding`; times accept unix seconds or ISO dates. Lists are capped at 10,000 trades and the request body at 2 MB, and unknown columns or fields are rejected rather than ignored.
+
+The import names a market and a starting cash. When the market's history covers a trade's holding window, the hourly candles of the settlement bars it lived through fill in the worst and best prices it provably saw (excursion PnL only when an entry price is also supplied); trades outside the available history carry no excursion data and are counted in the warnings, never invented. Missing sizes default to one whole base wherever a trade's own size scales a result, which is disclosed. The list is sorted chronologically before analysis because the block bootstrap's realism depends on real adjacency.
+
+The import id is a hash of the sorted list with its market and starting cash, so re-running the same import with the default seed reproduces byte-identical output. Imports are analyses, not runs: they are not persisted to the run store, and the fill check rides the observed-fills path — nothing is re-priced, with an import-specific note that the same-bar share measures how finely the available history resolves each holding window, not a verdict on the importer's fills.
+
 ## Honesty rules
 - Every result states what it cannot see.
 - Fewer than 30 trades, or fewer than 1000 paths, is warned about.

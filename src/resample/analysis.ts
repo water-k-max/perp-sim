@@ -107,7 +107,7 @@ export type ResampleAnalysis = {
     horizonTrades: number;
     mode: ResampleModeSelection;
     sizing: SizingMode;
-    source: { kind: "run"; runId: string };
+    source: { kind: "run" | "import"; runId: string };
     createdAt: string;
   };
   input: {
@@ -210,6 +210,10 @@ export type AnalysisInputs = {
   effectiveImfBps: bigint;
   market: string;
   assumptions: RunAssumptions;
+  /** Import-specific disclosures, appended verbatim to the standard warnings. */
+  extraWarnings?: string[];
+  /** Where the trade list came from; "run" (engine trades) unless the importer says otherwise. */
+  sourceKind?: "run" | "import";
 };
 
 export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis {
@@ -288,6 +292,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
       break;
     }
   }
+  warnings.push(...(inputs.extraWarnings ?? []));
 
   return {
     version: 2,
@@ -297,7 +302,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
       horizonTrades: horizon,
       mode: request.mode,
       sizing: request.sizing,
-      source: { kind: "run", runId: inputs.runId },
+      source: { kind: inputs.sourceKind ?? "run", runId: inputs.runId },
       createdAt: inputs.createdAt,
     },
     input: {

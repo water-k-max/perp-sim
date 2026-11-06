@@ -3,12 +3,15 @@ import { readFile } from "node:fs/promises";
 import { BacktestInputError, listMarkets, parseRunRequest, runRequest } from "../backtest-api.js";
 import { createClient } from "../client.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
+import { loadMarketData } from "../data/ingest.js";
 import { listDatasets } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
 import { forwardStoredRun, forwardTestJson } from "../forward/forward.js";
 import { resampleStoredRun } from "../resample/service.js";
 import { resampleAccount } from "../resample/account.js";
+import { parseImport, type ParsedImport } from "../resample/import.js";
+import { runImportFlow } from "../resample/import-flow.js";
 import { toRaw } from "../units.js";
 import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, parsePublicOrigin, readJson, SECURITY_HEADERS } from "./http-kit.js";
 
@@ -80,6 +83,34 @@ createServer(async (req, res) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Resampling failed.";
       json(res, /No saved run/.test(message) ? 404 : 400, { error: message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/trades/resample") {
+    if (!originAllowed(req, port, publicOrigin)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
+    if (!req.headers["content-type"]?.startsWith("application/json")) { json(res, 415, { error: "Send JSON configuration." }); return; }
+    if (!flight.tryAcquire()) { json(res, 429, { error: "A replay is already running. Please wait and try again." }); return; }
+    try {
+      let body: unknown;
+      try { body = await readJson(req, 2_000_000); }
+      catch (error) {
+        json(res, error instanceof BodyTooLarge ? 413 : 400, { error: error instanceof BodyTooLarge ? "The import is too large." : "Could not read request." });
+        return;
+      }
+      let parsed: ParsedImport;
+      try { parsed = parseImport(body); }
+      catch (error) { json(res, 400, { error: error instanceof Error ? error.message : "Invalid import." }); return; }
+      try {
+        json(res, 200, await runImportFlow(parsed, { createClient, listPerps, selectMarket, resolveConfig, loadMarketData }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Import failed.";
+        if (/no perp market matching|has no baseDecimals/.test(message)) { json(res, 400, { error: message }); return; }
+        console.error("Import resample failed:", message);
+        json(res, 422, { error: "Import resampling failed." });
+      }
+    } finally {
+      flight.release();
     }
     return;
   }

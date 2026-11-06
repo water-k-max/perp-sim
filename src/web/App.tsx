@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Configuration } from './Configuration.js';
 import { WalletPanel } from './Wallet.js';
+import { ImportTradesPanel } from './ImportTrades.js';
 import { Results } from './Results.js';
 import { record, validateResponse, type RequestDTO, type Result } from './dto.js';
 import { clearHistory, rememberRun, type HistoryEntry } from './history.js';
@@ -91,6 +92,7 @@ export function App() {
         <Results onEdit={() => navigateSetup(true)} data={result} busy={busy} badge={badge} activity={activity} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
       </div>
       <WalletPanel />
+      <ImportTradesPanel />
       <details className="panel methodology"><summary>Know what you’re measuring <span>Methodology &amp; assumptions</span></summary><div><p>This is a historical replay of a declared strategy, not a live trade. Starting cash and base-asset size are independent inputs; the market determines the quote currency.</p><p>With the trade-tape model, each order is filled against the pool’s own recorded trades inside a window that opens after the decision plus latency, capped by a share of the volume traded in that window. Nothing is executed and no order book depth is replayed, so fills are modelled, not simulated queue positions.</p><p>Ending equity reflects price PnL, signed funding, taker and maker fees, and gas. Attribution must sum to the equity change exactly; a non-zero residual is reported as a failed invariant, never rounded away. Check settlement gaps, index-derived marks and candle coverage before interpreting results.</p></div></details>
       <footer className="main-footer"><span>NOVA PROTOCOL <span className="muted">/ Backtest Lab</span></span><span>Research, not financial advice.</span></footer>
     </main>

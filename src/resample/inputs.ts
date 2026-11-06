@@ -75,7 +75,7 @@ export function barIndexAt(bars: readonly Bar[], ts: number): number | null {
   return lo;
 }
 
-function excursionFromCandles(
+export function excursionFromCandles(
   bars: readonly Bar[],
   entryIdx: number,
   exitIdx: number,
