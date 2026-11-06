@@ -51,7 +51,7 @@ export async function loadMarketData(
   if (!(options.toSec > options.fromSec)) throw new Error("history window must end after it starts");
   const key = datasetKey({
     kind: "perp-market-data",
-    version: 3,
+    version: 4,
     chainId: config.chainId,
     source: config.indexerUrl,
     pool: cfg.pool.toLowerCase(),
@@ -61,7 +61,7 @@ export async function loadMarketData(
   if (!options.refresh) {
     const hit = await readDataset<MarketData>(key);
     if (hit) {
-      if (hit.manifest.version !== 3 || hit.manifest.sha256 !== hashMarketData(hit)) throw new Error("Market data semantic hash mismatch");
+      if (hit.manifest.version !== 4 || hit.manifest.sha256 !== hashMarketData(hit)) throw new Error("Market data semantic hash mismatch");
       return hit;
     }
   }
@@ -78,14 +78,18 @@ export async function loadMarketData(
     toBlock: Number(BigInt(funding.rows[funding.rows.length - 1].blockNumber)),
   };
 
-  const candles3600 = await candleWindow(client, cfg.pool, 3600, range.fromSec, range.toSec);
+  // Settlements are not hour-aligned (they land on the pool's epoch offset), so the first
+  // bar can open on the on-the-hour bucket at or before its own settlement. Fetching from
+  // `range.fromSec` alone drops that bucket and leaves bar 0 without an intra-bar path in
+  // every window; starting one interval earlier lets buildBars/withIntraBarPath attach it.
+  const candles3600 = await candleWindow(client, cfg.pool, 3600, range.fromSec - 3600 + 1, range.toSec);
   if (!candles3600.complete) warnings.push("Hourly candles were truncated; some bars have no intra-bar path.");
 
   const epochs = await epochWindow(cfg.pool, range.fromBlock, range.toBlock);
   if (epochs.length === 0) warnings.push("No parameter epochs indexed for this window; current chain parameters are used throughout.");
 
   const manifest: DataManifest = {
-    version: 3,
+    version: 4,
     chainId: config.chainId,
     pool: cfg.pool.toLowerCase(),
     market: cfg.symbol,

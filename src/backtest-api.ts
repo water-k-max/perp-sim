@@ -532,7 +532,9 @@ export async function runBacktest(input: Request) {
   if (bars.length < 3) throw new BacktestInputError("Fewer than three settlements found. Try a longer lookback.");
   let candleCoverage: { bars: number; covered: number; complete: boolean } | null = null;
   if (input.intrabar) {
-    const candles = await candleWindow(client, cfg.pool, 3600, bars[0].t, end);
+    // One interval earlier: the first bar may open on the hour-aligned bucket at or before
+    // its own settlement, which a fetch from bars[0].t alone would drop.
+    const candles = await candleWindow(client, cfg.pool, 3600, bars[0].t - 3600 + 1, end);
     bars = withIntraBarPath(bars, candles.rows);
     candleCoverage = { bars: bars.length, covered: bars.filter(b => b.low !== null).length, complete: candles.complete };
   }

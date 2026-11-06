@@ -34,7 +34,7 @@ export type DataRange = {
  *  result difference is a model difference, not a data difference.
  */
 export type DataManifest = {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   chainId: number;
   pool: string;
   market: string;
