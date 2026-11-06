@@ -336,6 +336,9 @@ export function resampleImportedTrades(parsed: ParsedImport, opts: ImportFlowOpt
     },
     extraWarnings,
     sourceKind: "import",
+    // The null test needs the market's history; without it (load failed, empty window) the
+    // analysis carries no edge block rather than one priced on no data.
+    edge: opts.bars.length > 0 ? { bars: opts.bars, cfg } : undefined,
   };
   const analysis = buildResampleAnalysis(inputs);
   const invariants = checkResample(analysis, inputs);

@@ -54,8 +54,9 @@ const dec = (value: unknown): value is string => typeof value === 'string' && de
 /** Validate the optional resample analysis block before it enters UI state. */
 export function validateResample(value: unknown): ResampleBlock {
   // Version 1 documents (stored in older run bundles) stay valid; version 2 adds the
-  // per-path metric confidence intervals and is required for anything produced now.
-  if (!record(value) || (value.version !== 1 && value.version !== 2) || !record(value.meta) || !record(value.input)) throw new Error('The result contains an invalid resample analysis.');
+  // per-path metric confidence intervals; version 3 adds the random-entry null (edge).
+  // Version 2 is required for anything produced now; 3 since the edge block shipped.
+  if (!record(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || !record(value.meta) || !record(value.input)) throw new Error('The result contains an invalid resample analysis.');
   const meta = value.meta;
   if (typeof meta.seed !== 'string' || !Number.isInteger(meta.paths) || typeof meta.mode !== 'string' || typeof meta.sizing !== 'string' || !record(meta.source) || typeof meta.createdAt !== 'string') throw new Error('The resample analysis has invalid metadata.');
   if (!Array.isArray(value.assumptions) || !value.assumptions.every((a: unknown) => typeof a === 'string')) throw new Error('The resample analysis has invalid assumptions.');
@@ -81,6 +82,21 @@ export function validateResample(value: unknown): ResampleBlock {
     if (!record(row) || !dec(row.sizeBase) || !dec(row.lossProbability) || !dec(row.medianPnl) || !dec(row.p05Pnl)) throw new Error('The resample sizing ladder has an invalid row.');
   }
   if (value.oos !== null && (!record(value.oos) || !dec(value.oos.boundary) || !Array.isArray(value.oos.heldCurve) || !(value.oos.heldCurve as unknown[]).every(dec))) throw new Error('The resample analysis has an invalid out-of-sample block.');
+  // Pre-edge documents (version 1–2) carry no edge key; version 3 documents carry either a
+  // valid block or an explicit null (no trades, or no history to price the null against).
+  if (value.edge === undefined) {
+    if (value.version >= 3) throw new Error('The resample analysis is missing its random-entry null block.');
+  } else if (value.edge !== null) {
+    const edge = value.edge as Record<string, unknown>;
+    const paths = edge.paths, skipped = edge.skippedTrades, p = edge.pValue;
+    const edgeDec = ['realizedTotal', 'nullP05', 'nullMedian', 'nullP95', 'nullMean', 'pValue'] as const;
+    if (!Number.isInteger(paths) || (paths as number) <= 0 || !edgeDec.every(k => dec(edge[k]))
+      || !Number.isInteger(skipped) || (skipped as number) < 0
+      || !(Number(p) >= 0 && Number(p) <= 1)
+      || !Array.isArray(edge.notes) || !edge.notes.every((n: unknown) => typeof n === 'string')) {
+      throw new Error('The resample analysis has an invalid random-entry null block.');
+    }
+  }
   if (!Array.isArray(value.warnings) || !value.warnings.every((w: unknown) => typeof w === 'string')) throw new Error('The resample analysis has invalid warnings.');
   if (!Array.isArray(value.invariants)) throw new Error('The resample analysis has no invariants.');
   for (const item of value.invariants as unknown[]) {

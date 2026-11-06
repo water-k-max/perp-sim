@@ -67,9 +67,18 @@ function canonical(value: unknown): string {
 
 /** The independent random stream for one resampled path. */
 export function deriveStream(seed: string | number | bigint, pathIndex: number): Rng {
+  return deriveDomainStream("perp-sim/resample/v1", seed, pathIndex);
+}
+
+/** The independent random stream for one random-entry null path (a distinct domain, so edge draws never line up with resample draws). */
+export function deriveEdgeStream(seed: string | number | bigint, pathIndex: number): Rng {
+  return deriveDomainStream("perp-sim/edge/v1", seed, pathIndex);
+}
+
+function deriveDomainStream(domain: string, seed: string | number | bigint, pathIndex: number): Rng {
   if (!Number.isInteger(pathIndex) || pathIndex < 0) throw new Error("pathIndex must be a non-negative integer");
   const digest = createHash("sha256")
-    .update(canonical(["perp-sim/resample/v1", seed, pathIndex]))
+    .update(canonical([domain, seed, pathIndex]))
     .digest("hex");
   return xoshiro256ss(BigInt(`0x${digest}`));
 }

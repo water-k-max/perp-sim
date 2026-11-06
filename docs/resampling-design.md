@@ -24,6 +24,11 @@ For a set of position sizes, the share of resampled paths that lose more than an
 ## Out-of-sample check
 The tail of the list is held back. The earlier trades are bootstrapped and the 95th percentile of their finals is the boundary. The held-back trades replay in order and are compared with it. Inside the boundary is not proof of an edge; crossing is a reason to look at what changed.
 
+## Random-entry null
+Trade-order resampling answers "how bad could the path have been given these trades"; it cannot say whether the entries themselves are better than chance. The random-entry null (`src/resample/edge.ts`, the "Null test" tab) is the closest thing to an edge test this view can give.
+
+Each of 300 null paths walks the recorded trades in order and, for every one, enters at a uniformly random settlement bar and closes at the settlement mark exactly that trade's holding time later — same sides, same sizes, same holding times, no information. Null trades are priced by the engine's own close arithmetic (floored gross PnL, the protocol kernel's settled funding, one taker fee on the closing leg), so a null trade and a recorded trade are the same object priced the same way; a canary pins that equality against real position round trips. The p-value is the share of null totals at or above the recorded total, add-one corrected so it can never report an impossible zero. It is one-sided: a small p-value says the entries beat random timing on this history — a reason to look closer, not proof of skill. Trades whose holding time exceeds the available history cannot be placed anywhere and are skipped and counted, never invented.
+
 ## Forward check
 Live fills are accumulated exactly and compared with the resampled band, counting how many fall inside or outside.
 
@@ -40,4 +45,4 @@ The import id is a hash of the sorted list with its market and starting cash, so
 ## Honesty rules
 - Every result states what it cannot see.
 - Fewer than 30 trades, or fewer than 1000 paths, is warned about.
-- Same inputs and seed give byte-identical output. Analysis documents are versioned (currently version 2: adds the win-rate and Sharpe intervals); version 1 bundles stay readable.
+- Same inputs and seed give byte-identical output. Analysis documents are versioned (currently version 3: adds the random-entry null; version 2 added the win-rate and Sharpe intervals); version 1 and 2 bundles stay readable.

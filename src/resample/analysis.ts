@@ -16,6 +16,9 @@ import { isResampleMode, type ResampleMode } from "./sample.js";
 import { auditTradeList, assumptionLines, type RunAssumptions } from "./audit.js";
 import { simulateSizing } from "./sizing.js";
 import { runOos } from "./oos.js";
+import { runEdgeTest, type EdgeBlock } from "./edge.js";
+import type { Bar } from "../history/bars.js";
+import type { MarketConfig } from "../history/market.js";
 import type { TradeList } from "./inputs.js";
 
 export type ResampleModeSelection = ResampleMode | "both";
@@ -100,7 +103,7 @@ export type DistributionBlock = {
 };
 
 export type ResampleAnalysis = {
-  version: 2;
+  version: 3;
   meta: {
     seed: string;
     paths: number;
@@ -150,6 +153,8 @@ export type ResampleAnalysis = {
     heldSeqs: number[];
     notes: string[];
   } | null;
+  /** The random-entry null: how likely the recorded total is under uninformed timing. */
+  edge: EdgeBlock | null;
   warnings: string[];
 };
 
@@ -214,6 +219,8 @@ export type AnalysisInputs = {
   extraWarnings?: string[];
   /** Where the trade list came from; "run" (engine trades) unless the importer says otherwise. */
   sourceKind?: "run" | "import";
+  /** The market history and parameters the random-entry null prices against; absent ⇒ no edge test. */
+  edge?: { bars: readonly Bar[]; cfg: MarketConfig };
 };
 
 export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis {
@@ -279,6 +286,10 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
     quoteScale: inputs.quoteScale,
   });
 
+  const edge = inputs.edge === undefined || list.trades.length === 0
+    ? null
+    : runEdgeTest({ seed, list, bars: inputs.edge.bars, cfg: inputs.edge.cfg, quoteScale: inputs.quoteScale });
+
   const warnings: string[] = [];
   warnings.push("Distributions model trade-order risk on the recorded trade list; they are not a forecast of future PnL.");
   if (inputs.list.sameBarCount > 0) {
@@ -295,7 +306,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
   warnings.push(...(inputs.extraWarnings ?? []));
 
   return {
-    version: 2,
+    version: 3,
     meta: {
       seed,
       paths: request.paths,
@@ -351,6 +362,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
       heldSeqs: oos.heldSeqs,
       notes: oos.notes,
     },
+    edge,
     warnings,
   };
 }

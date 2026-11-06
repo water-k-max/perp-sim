@@ -77,6 +77,37 @@ test("validateResample rejects tampered or malformed blocks", () => {
   tamper(b => { (b.audit as Record<string, unknown>).notes = "nope"; });
 });
 
+test("validateResample accepts version 3 with the edge block, rejects it missing or malformed", () => {
+  // Version 3 documents carry everything version 2 demands plus the edge block.
+  const v2 = validateResample({
+    ...blockV1(),
+    version: 2,
+    distributions: [{
+      ...(blockV1().distributions as Record<string, unknown>[])[0]!,
+      p05WinRateBps: 2500, medianWinRateBps: 4375, p95WinRateBps: 6875,
+      p05SharpeX1e4: -1200, medianSharpeX1e4: 900, p95SharpeX1e4: 3100,
+    }],
+  });
+  const edge = { paths: 300, realizedTotal: "2.0", nullP05: "-8.5", nullMedian: "1.0", nullP95: "9.5", nullMean: "0.5", pValue: "0.1234", skippedTrades: 0, notes: ["One-sided."] };
+  const v3 = { ...v2, version: 3, edge };
+  assert.equal(validateResample(v3).edge!.paths, 300);
+  // An explicit null edge (no trades or no history) is valid on a v3 document.
+  assert.equal(validateResample({ ...v2, version: 3, edge: null }).edge, null);
+  // Version 3 demands the key: a v2-shaped document relabelled v3 fails closed.
+  const noEdge = { ...v2, version: 3 } as Record<string, unknown>;
+  assert.throws(() => validateResample(noEdge), /random-entry null/);
+  const tamper = (mutate: (e: Record<string, unknown>) => void) => {
+    const e = structuredClone(edge);
+    mutate(e);
+    assert.throws(() => validateResample({ ...v2, version: 3, edge: e }), Error);
+  };
+  tamper(e => { e.paths = 0; });
+  tamper(e => { e.realizedTotal = "two"; });
+  tamper(e => { e.pValue = "1.5"; });
+  tamper(e => { e.skippedTrades = -1; });
+  tamper(e => { e.notes = "one-sided"; });
+});
+
 test("validateResponse validates an optional resample block on a model result", () => {
   const base = {
     market: "BTC", quoteSymbol: "USDso", side: "long", size: "0.01", cash: "1000", entryPrice: null,

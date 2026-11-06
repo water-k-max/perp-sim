@@ -3,6 +3,7 @@ import type { RunResult } from "../engine/loop.js";
 import { hashRun } from "../engine/loop.js";
 import { attribute } from "../analytics/attribution.js";
 import { sha256 } from "../data/store.js";
+import { fromRaw } from "../units.js";
 import { buildResampleAnalysis, type AnalysisInputs, type ResampleAnalysis } from "../resample/analysis.js";
 
 /**
@@ -207,6 +208,23 @@ export function checkResample(analysis: ResampleAnalysis, inputs: AnalysisInputs
       !leak && ordered && counts && curve
         ? `fit ${fitCount} trades all precede held ${heldCount}; held curve has ${heldCurve.length} points`
         : `leak=${leak} ordered=${ordered} counts=${counts} (${fitCount}+${heldCount} vs ${analysis.input.tradeCount}) curve=${curve}`,
+    );
+  }
+
+  if (analysis.edge === null) {
+    out.push({ id: "edge-realized-total", status: "skip", severity: "warn", detail: "no random-entry null in this analysis" });
+  } else {
+    const expected = fromRaw(inputs.list.trades.reduce((sum, t) => sum + t.pnl, 0n), inputs.quoteDecimals);
+    const p = Number(analysis.edge.pValue);
+    const ordered = Number(analysis.edge.nullP05) <= Number(analysis.edge.nullMedian) && Number(analysis.edge.nullMedian) <= Number(analysis.edge.nullP95);
+    const ok = analysis.edge.realizedTotal === expected && p >= 0 && p <= 1 && ordered && analysis.edge.paths > 0;
+    verdict(
+      "edge-realized-total",
+      ok,
+      "error",
+      ok
+        ? `edge null over ${analysis.edge.paths} paths compares the recorded total ${analysis.edge.realizedTotal} exactly; p-value ${analysis.edge.pValue} within [0, 1]`
+        : `edge block inconsistent: realized total ${analysis.edge.realizedTotal} vs recorded ${expected}, p-value ${analysis.edge.pValue}, ladder ordered ${ordered}`,
     );
   }
 

@@ -70,6 +70,7 @@ export async function resampleStoredRun(runId: string, rawResample: unknown): Pr
       gasPerTx: String(snapshot.result.model.gasPerTx),
       intrabar: snapshot.input.intrabar,
     },
+    edge: { bars, cfg },
   };
   const analysis = buildResampleAnalysis(inputs);
   const invariants = checkResample(analysis, inputs);

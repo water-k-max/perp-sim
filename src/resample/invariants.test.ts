@@ -54,13 +54,14 @@ function statuses(list: ReturnType<typeof checkResample>): Record<string, string
   return Object.fromEntries(list.map((i) => [i.id, i.status]));
 }
 
-test("a fresh analysis passes all three resample invariants", () => {
+test("a fresh analysis passes the resample invariants; the edge null is skipped without history", () => {
   const { analysis, inputs } = fixture();
   const list = checkResample(analysis, inputs);
   assert.deepEqual(statuses(list), {
     "resample-deterministic": "pass",
     "resample-bounds": "pass",
     "oos-no-lookahead": "pass",
+    "edge-realized-total": "skip",
   });
 });
 

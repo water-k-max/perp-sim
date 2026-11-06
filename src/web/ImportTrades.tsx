@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { amount, number, record, validateResample, type Market, type ResampleBlock } from './dto.js';
-import { FanChart, Histogram, Stat } from './Resample.js';
+import { FanChart, Histogram, Stat, EdgeNullView } from './Resample.js';
 
 type ImportOutcome = {
   runId: string;
@@ -102,6 +102,9 @@ export function ImportTradesPanel() {
           <Stat label="Sharpe p05 / p95" value={dist.p05SharpeX1e4 === null || dist.medianSharpeX1e4 === null || dist.p95SharpeX1e4 === null ? '—' : `${number(dist.p05SharpeX1e4 / 10_000, 2)} / ${number(dist.p95SharpeX1e4 / 10_000, 2)}`} title="Trade-order confidence interval for per-trade Sharpe" />
         </div>
         <Histogram values={dist.finalEquities.map(Number)} label={`Final equity (${result.quoteSymbol})`} />
+        <h4>Random-entry null</h4>
+        <p className="muted">Random entries, same holding times, same costs — how likely is this total under uninformed timing?</p>
+        <EdgeNullView edge={block.edge ?? null} quote={result.quoteSymbol} />
         <details className="panel methodology">
           <summary>What this import assumes <span>Audit &amp; disclosures</span></summary>
           <h4>Assumptions</h4>

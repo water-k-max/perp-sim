@@ -299,6 +299,7 @@ function resampleInputs(replay: Replay, request: ResampleRequest, manifest: RunM
       gasPerTx: fromRaw(result.model.gasPerTx, cfg.quoteDecimals),
       intrabar,
     },
+    edge: { bars: replay.bars, cfg },
   };
 }
 

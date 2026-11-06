@@ -79,7 +79,7 @@ test("the import flow resolves the market, rebuilds bars from market data and re
   assert.equal(outcome.market, "TEST");
   assert.equal(outcome.quoteSymbol, "USDso");
   assert.equal(outcome.tradeCount, 3);
-  assert.equal(outcome.resample.version, 2);
+  assert.equal(outcome.resample.version, 3);
   assert.equal(outcome.resample.meta.source.kind, "import");
   assert.equal(outcome.resample.distributions.length, 2); // default mode "both"
   assert.equal(outcome.resample.input.withoutExcursionCount, 1); // trade 3 lies beyond the last bar
@@ -105,5 +105,7 @@ test("a history load failure degrades to no excursion data and the flow still co
   const outcome = await runImportFlow(parseImport({ payload: CSV, market: "TEST", startingCash: "1000" }), fakeDeps(null));
   assert.equal(outcome.resample.input.withoutExcursionCount, 3);
   assert.ok(outcome.resample.warnings.some((w) => w.includes("could not be loaded")));
-  assert.ok(outcome.resample.invariants.every((i) => i.status === "pass"), outcome.resample.invariants.map((i) => `${i.id}:${i.status}`).join(","));
+  // Without history there is no random-entry null: edge-realized-total is a skip, not a pass.
+  assert.ok(outcome.resample.invariants.every((i) => i.status !== "fail"), outcome.resample.invariants.map((i) => `${i.id}:${i.status}`).join(","));
+  assert.equal(outcome.resample.invariants.find((i) => i.id === "edge-realized-total")!.status, "skip");
 });

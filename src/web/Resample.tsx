@@ -61,7 +61,25 @@ export function Stat({ label, value, title }: { label: string; value: string; ti
   return <article className="panel metric"><h4>{label}</h4><strong title={title}>{value}</strong></article>;
 }
 
-const tabNames = ['distribution', 'audit', 'sizing', 'oos'] as const;
+/** The random-entry null: how likely the recorded total is under uninformed timing. */
+export function EdgeNullView({ edge, quote }: { edge: ResampleBlock['edge']; quote: string }) {
+  if (!edge) return <p className="muted">The random-entry null needs trades and market history to price entries against; it is not part of this analysis.</p>;
+  const p = Number(edge.pValue);
+  const verdict = p < 0.05 ? 'UNLIKELY TO BE LUCK' : p < 0.2 ? 'WEAK SEPARATION' : 'CONSISTENT WITH LUCK';
+  return <>
+    <div className="metrics">
+      <Stat label="Random-entry p-value" value={edge.pValue} title={`Share of ${edge.paths} random-entry null totals at or above the recorded total, add-one corrected. Small means entries beat random timing on this history — a reason to look closer, not proof of skill.`} />
+      <Stat label="Verdict" value={verdict} title="A small p-value is evidence worth investigating; a large one says the total is ordinary under random timing." />
+      <Stat label="Recorded total" value={amount(edge.realizedTotal)} title={`Sum of recorded net PnL, ${quote}`} />
+      <Stat label="Null p05 / p95" value={`${amount(edge.nullP05)} / ${amount(edge.nullP95)}`} title="5th and 95th percentile of the random-entry totals" />
+      <Stat label="Null mean" value={amount(edge.nullMean)} title={`Mean of ${edge.paths} random-entry totals`} />
+    </div>
+    {edge.skippedTrades > 0 && <p className="muted">{edge.skippedTrades} null trade(s) could not be placed: the market history is shorter than the holding time.</p>}
+    <ul className="warnings">{edge.notes.map((line, i) => <li key={i}>{line}</li>)}</ul>
+  </>;
+}
+
+const tabNames = ['distribution', 'audit', 'sizing', 'oos', 'edge'] as const;
 
 export function ResamplePanel({ data }: { data: Result }) {
   const runId = data.manifest?.runId;
@@ -130,7 +148,7 @@ export function ResamplePanel({ data }: { data: Result }) {
       <button type="button" className="secondary" disabled={busy || !runId} onClick={() => void rerun()}>{busy ? 'Resampling…' : 'Re-run'}</button>
     </div>
     <p className="error" role="alert" hidden={error === null}>{error}</p>
-    <div className="tablist" role="tablist" aria-label="Resampling views">{tabNames.map(name => <button key={name} type="button" role="tab" aria-selected={active === name} data-tab={name} onClick={() => setActive(name)}>{({ distribution: 'Distribution', audit: 'Fill check', sizing: 'Sizing', oos: 'Out-of-sample' } as const)[name]}</button>)}</div>
+    <div className="tablist" role="tablist" aria-label="Resampling views">{tabNames.map(name => <button key={name} type="button" role="tab" aria-selected={active === name} data-tab={name} onClick={() => setActive(name)}>{({ distribution: 'Distribution', audit: 'Fill check', sizing: 'Sizing', oos: 'Out-of-sample', edge: 'Null test' } as const)[name]}</button>)}</div>
 
     <div role="tabpanel" hidden={active !== 'distribution'}>
       {dists.length > 1 && <div className="segmented resample-mode">{dists.map(d => <label key={d.mode}><input type="radio" name="resample-mode" checked={mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode === 'shuffle_without_replacement' ? 'Shuffle (no replacement)' : d.mode === 'block_bootstrap_with_replacement' ? 'Block bootstrap (streaks)' : 'Bootstrap (with replacement)'}</span></label>)}</div>}
@@ -191,6 +209,11 @@ export function ResamplePanel({ data }: { data: Result }) {
         </svg>}
         <ul className="warnings">{block.oos.notes.map((line, i) => <li key={i}>{line}</li>)}</ul>
       </>}
+    </div>
+
+    <div role="tabpanel" hidden={active !== 'edge'}>
+      <p className="muted">Random entries, same holding times, same costs — how likely is the recorded total under uninformed timing?</p>
+      <EdgeNullView edge={block.edge ?? null} quote={data.quoteSymbol} />
     </div>
 
 
