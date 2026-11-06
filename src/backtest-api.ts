@@ -20,12 +20,12 @@ import { checkRun, checkResample, type Invariant } from "./verify/invariants.js"
 import { buildResampleAnalysis, parseResampleRequest, type AnalysisInputs, type ResampleAnalysis, type ResampleRequest } from "./resample/analysis.js";
 import { extractTrades, type TradeList } from "./resample/inputs.js";
 import type { TapeFill } from "./data/types.js";
-import { buildManifest, getCodeIdentity, type RunManifest } from "./runs/manifest.js";
+import { buildManifest, codeIsLoaded, getCodeIdentity, type RunManifest } from "./runs/manifest.js";
 import { fromRaw, toRaw } from "./units.js";
 
 const loadedCode = await getCodeIdentity();
 async function assertLoadedCode(): Promise<void> {
-  if (sha256(await getCodeIdentity()) !== sha256(loadedCode)) {
+  if (!codeIsLoaded(await getCodeIdentity(), loadedCode)) {
     throw new Error("Source or runtime identity changed; restart the process before replaying.");
   }
 }

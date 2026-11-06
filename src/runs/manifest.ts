@@ -113,6 +113,16 @@ export async function getCodeIdentity(root = ROOT): Promise<CodeIdentity> {
   };
 }
 
+/**
+ *  What the process guards is what it executes: source bytes and the runtime. Commit
+ *  metadata is recorded per run for traceability, but moving HEAD does not change the
+ *  code a running process executes, so a commit between runs must not invalidate it —
+ *  only an edit to the source/configuration bytes (or a runtime change) does.
+ */
+export function codeIsLoaded(current: CodeIdentity, loaded: CodeIdentity): boolean {
+  return current.sourceHash === loaded.sourceHash && current.runtime === loaded.runtime;
+}
+
 function describeData(data: MarketData | null): RunManifest["data"] {
   if (!data) return null;
   return {

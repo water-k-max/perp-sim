@@ -9,7 +9,7 @@ import type { SliceRecord, TapeSlice, TapeSource } from "../data/tape.js";
 
 const root = await mkdtemp(join(tmpdir(), "run-manifest-"));
 process.env.PERP_SIM_CACHE = join(root, "cache");
-const { buildManifest, getCodeIdentity, validateManifest } = await import("./manifest.js");
+const { buildManifest, codeIsLoaded, getCodeIdentity, validateManifest } = await import("./manifest.js");
 const { readSnapshot, sha256, writeSnapshot } = await import("../data/store.js");
 const { hashMarketData } = await import("../data/ingest.js");
 const { PROFILES } = await import("../engine/fills.js");
@@ -176,6 +176,21 @@ test("source, commit metadata and runtime independently participate in code/run 
     assert.equal(next.configHash, first.configHash);
     assert.equal(next.dataVersion, first.dataVersion);
   }
+});
+
+test("the loaded-code guard keys on executing bytes and runtime, never on commit metadata", async () => {
+  const project = join(root, "guard-project");
+  await mkdir(join(project, "src"), { recursive: true });
+  await mkdir(join(project, "public"), { recursive: true });
+  await writeFile(join(project, "src", "main.ts"), "original");
+  for (const name of ["package.json", "pnpm-lock.yaml", "tsconfig.json", "tsconfig.web.json"]) await writeFile(join(project, name), "{}");
+  const identity = await getCodeIdentity(project);
+  assert.equal(codeIsLoaded(identity, identity), true);
+  // A commit between runs moves HEAD without touching a single byte of running code.
+  assert.equal(codeIsLoaded({ ...identity, sourceCommit: "0".repeat(40) }, identity), true, "a commit does not change executing code");
+  // What does change what the process executes:
+  assert.equal(codeIsLoaded({ ...identity, sourceHash: "0".repeat(64) }, identity), false, "edited source bytes must invalidate");
+  assert.equal(codeIsLoaded({ ...identity, runtime: `${identity.runtime};changed` }, identity), false, "a runtime change must invalidate");
 });
 
 test("code reads current source/config/web bytes without caching or environment secrets", async () => {
