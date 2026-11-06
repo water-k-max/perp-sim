@@ -45,7 +45,7 @@ export function resampleAccount(report: ReconcileReport, opts: AccountResampleOp
   ];
   if (trades.length < 30) warnings.push(`Only ${trades.length} closed trades: percentiles over so few observations are wide and unstable.`);
   const wins = trades.filter((t) => t.pnl > 0n).length;
-  const distributions = trades.length === 0 ? [] : (["shuffle_without_replacement", "bootstrap_with_replacement"] as const).map((mode) =>
+  const distributions = trades.length === 0 ? [] : (["shuffle_without_replacement", "bootstrap_with_replacement", "block_bootstrap_with_replacement"] as const).map((mode) =>
     distributionBlock(mode, summarizePaths(simulatePaths({
       trades, mode, sizing: opts.sizing ?? "static", paths: opts.paths, horizon: trades.length, start: opts.start, seed,
     }), scale), opts.quoteDecimals));

@@ -44,6 +44,14 @@ export type PathSummary = {
   p95MaxDrawdownBps: number;
   medianMaxLosingStreak: number;
   p95MaxLosingStreak: number;
+  /** Percentiles of the per-path win rate (basis points) and per-trade Sharpe (×10⁴). */
+  p05WinRateBps: number;
+  medianWinRateBps: number;
+  p95WinRateBps: number;
+  /** Null when no path has a defined Sharpe (fewer than three trades or zero deviation). */
+  p05SharpeX1e4: number | null;
+  medianSharpeX1e4: number | null;
+  p95SharpeX1e4: number | null;
   /** Per-path exact values, in path order. */
   maxDrawdownsBps: bigint[];
   maxLosingStreaks: number[];
@@ -85,6 +93,9 @@ export function summarizePaths(paths: readonly PathOutcome[], quoteScale: bigint
   const ddSorted = ddBps.map(Number).sort((a, b) => a - b);
   const streaks = paths.map((p) => p.maxLosingStreak);
   const streakSorted = streaks.slice().sort((a, b) => a - b);
+  const winRates = paths.map((p) => Number(p.winRateBps)).sort((a, b) => a - b);
+  const sharpes = paths.map((p) => p.sharpeX1e4).filter((v): v is bigint => v !== null).map(Number).sort((a, b) => a - b);
+  const sharpeLadder = (q: number): number | null => sharpes.length === 0 ? null : quantileNum(sharpes, q);
   const bankruptcies = paths.filter((p) => p.bankruptcy).length;
 
   const steps = paths[0]!.curve.length;
@@ -119,6 +130,12 @@ export function summarizePaths(paths: readonly PathOutcome[], quoteScale: bigint
     p95MaxDrawdownBps: quantileNum(ddSorted, 0.95),
     medianMaxLosingStreak: quantileNum(streakSorted, 0.5),
     p95MaxLosingStreak: quantileNum(streakSorted, 0.95),
+    p05WinRateBps: quantileNum(winRates, 0.05),
+    medianWinRateBps: quantileNum(winRates, 0.5),
+    p95WinRateBps: quantileNum(winRates, 0.95),
+    p05SharpeX1e4: sharpeLadder(0.05),
+    medianSharpeX1e4: sharpeLadder(0.5),
+    p95SharpeX1e4: sharpeLadder(0.95),
     maxDrawdownsBps: ddBps,
     maxLosingStreaks: streaks,
     fan,

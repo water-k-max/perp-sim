@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { validateResample, validateResponse, type ResampleBlock } from "./dto.js";
 
-function block(): ResampleBlock {
+/** A stored v1-shaped bundle, exactly as old run files carry it: the validator must keep accepting these. */
+function blockV1(): Record<string, unknown> {
   return {
     version: 1,
     meta: { seed: "s".repeat(64), paths: 128, horizonTrades: 16, mode: "both", sizing: "static", source: { kind: "run", runId: "r".repeat(64) }, createdAt: "2026-11-01T00:00:00.000Z" },
@@ -28,10 +29,35 @@ function block(): ResampleBlock {
   };
 }
 
+/** The same bundle typed for mutation tests. */
+function block(): ResampleBlock {
+  return blockV1() as unknown as ResampleBlock;
+}
+
 test("validateResample accepts a well-formed block", () => {
-  const validated = validateResample(block());
+  const validated = validateResample(blockV1());
   assert.equal(validated.meta.paths, 128);
   assert.equal(validated.oos?.fitSeqs.length, 12);
+});
+
+test("validateResample accepts version 2 with metric intervals and rejects it missing them", () => {
+  const v2 = {
+    ...blockV1(),
+    version: 2,
+    distributions: [{
+      ...(blockV1().distributions as Record<string, unknown>[])[0]!,
+      p05WinRateBps: 2500, medianWinRateBps: 4375, p95WinRateBps: 6875,
+      p05SharpeX1e4: -1200, medianSharpeX1e4: 900, p95SharpeX1e4: 3100,
+    }],
+  };
+  assert.equal(validateResample(v2).distributions[0]!.medianWinRateBps, 4375);
+  const missing = (key: string) => {
+    const b = structuredClone(v2) as unknown as Record<string, unknown>;
+    const dist = (b.distributions as Record<string, unknown>[])[0]!;
+    delete dist[key];
+    assert.throws(() => validateResample(b), Error);
+  };
+  for (const key of ["p05WinRateBps", "medianWinRateBps", "p95WinRateBps", "p05SharpeX1e4", "medianSharpeX1e4", "p95SharpeX1e4"]) missing(key);
 });
 
 test("validateResample rejects tampered or malformed blocks", () => {
@@ -40,6 +66,7 @@ test("validateResample rejects tampered or malformed blocks", () => {
     mutate(b);
     assert.throws(() => validateResample(b), Error);
   };
+  // Version 2 demands the metric intervals, so a v1-shaped block relabelled v2 fails.
   tamper(b => { (b as { version: number }).version = 2; });
   tamper(b => { b.meta.paths = 12.5; });
   tamper(b => { b.distributions[0]!.cvar95 = "NaNish"; });

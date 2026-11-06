@@ -74,7 +74,7 @@ export function WalletPanel() {
       </div>
       <p className="error" role="alert" hidden={error === null}>{error}</p>
       {result && (dist ? <>
-        <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : 'Bootstrap'}</span></label>)}</div>
+        <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : d.mode.startsWith('block') ? 'Block boot.' : 'Bootstrap'}</span></label>)}</div>
         <FanChart dist={dist} quote={quote} original={[]} />
         <div className="metrics">
           <Stat label="Closed trades" value={String(result.closedTrades)} />

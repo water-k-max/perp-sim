@@ -53,7 +53,9 @@ const dec = (value: unknown): value is string => typeof value === 'string' && de
 
 /** Validate the optional resample analysis block before it enters UI state. */
 export function validateResample(value: unknown): ResampleBlock {
-  if (!record(value) || value.version !== 1 || !record(value.meta) || !record(value.input)) throw new Error('The result contains an invalid resample analysis.');
+  // Version 1 documents (stored in older run bundles) stay valid; version 2 adds the
+  // per-path metric confidence intervals and is required for anything produced now.
+  if (!record(value) || (value.version !== 1 && value.version !== 2) || !record(value.meta) || !record(value.input)) throw new Error('The result contains an invalid resample analysis.');
   const meta = value.meta;
   if (typeof meta.seed !== 'string' || !Number.isInteger(meta.paths) || typeof meta.mode !== 'string' || typeof meta.sizing !== 'string' || !record(meta.source) || typeof meta.createdAt !== 'string') throw new Error('The resample analysis has invalid metadata.');
   if (!Array.isArray(value.assumptions) || !value.assumptions.every((a: unknown) => typeof a === 'string')) throw new Error('The resample analysis has invalid assumptions.');
@@ -63,6 +65,15 @@ export function validateResample(value: unknown): ResampleBlock {
     for (const key of ['median', 'p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95', 'cvar95', 'bankruptcyRate'] as const) if (!dec(dist[key])) throw new Error(`The resample distribution has an invalid ${key}.`);
     if (!(dist.finalEquities as unknown[]).every(dec)) throw new Error('The resample distribution has invalid final equities.');
     if (!Array.isArray(dist.fan) || !(dist.fan as unknown[]).every(band => record(band) && Number.isInteger(band.step) && dec(band.p10) && dec(band.p25) && dec(band.p50) && dec(band.p75) && dec(band.p90))) throw new Error('The resample distribution has an invalid fan.');
+    if (value.version >= 2) {
+      for (const key of ['p05WinRateBps', 'medianWinRateBps', 'p95WinRateBps'] as const) {
+        if (typeof dist[key] !== 'number' || !Number.isFinite(dist[key])) throw new Error(`The resample distribution has an invalid ${key}.`);
+      }
+      for (const key of ['p05SharpeX1e4', 'medianSharpeX1e4', 'p95SharpeX1e4'] as const) {
+        const v = dist[key];
+        if (v !== null && (typeof v !== 'number' || !Number.isFinite(v))) throw new Error(`The resample distribution has an invalid ${key}.`);
+      }
+    }
   }
   if (!record(value.audit) || !Array.isArray(value.audit.repricedFinalEquities) || !(value.audit.repricedFinalEquities as unknown[]).every(dec) || !Array.isArray(value.audit.notes)) throw new Error('The resample analysis has an invalid audit block.');
   if (!record(value.sizing) || !Array.isArray(value.sizing.rows)) throw new Error('The resample analysis has an invalid sizing block.');

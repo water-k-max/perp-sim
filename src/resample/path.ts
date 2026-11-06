@@ -9,10 +9,13 @@
  *
  *  Max drawdown is measured from the account's start at the worst point along the path
  *  (their table's "losing" definition), not from a running high: `start - min(curve)`.
+ *  Each path also carries its own win rate and per-trade Sharpe (exact integers, ×10⁴),
+ *  so the stats edge can state confidence intervals for the metrics a single run reports.
  */
 
 import { drawOrder, type ResampleMode } from "./sample.js";
 import { deriveStream } from "./rng.js";
+import { isqrt } from "../analytics/decimal.js";
 
 export const SIZING_MODES = ["static", "compound"] as const;
 export type SizingMode = (typeof SIZING_MODES)[number];
@@ -28,6 +31,14 @@ export type PathOutcome = {
   /** Depth as basis points of starting capital. */
   maxDrawdownBps: bigint;
   maxLosingStreak: number;
+  /** Share of applied PnLs that are positive, x 10,000 (the path's own win rate). */
+  winRateBps: bigint;
+  /**
+   *  Per-trade Sharpe of the path's applied PnLs, x 10,000, exact integers — the same
+   *  convention as the run metrics, but over trades and not annualised. Null when the
+   *  deviation is zero or the path holds fewer than three trades.
+   */
+  sharpeX1e4: bigint | null;
   /** True when equity reaches or passes zero at any step. */
   bankruptcy: boolean;
 };
@@ -49,6 +60,7 @@ export function walkPath(opts: WalkOptions): PathOutcome {
   if (cap !== null && cap < 1n) throw new Error("compound cap must be at least 1x start");
 
   const curve: bigint[] = [start];
+  const appliedPnls: bigint[] = [];
   let equity = start;
   let minEquity = start;
   let streak = 0;
@@ -62,6 +74,7 @@ export function walkPath(opts: WalkOptions): PathOutcome {
         : (trade.pnl * (cap !== null && equity > cap * start ? cap * start : equity)) / start;
     equity += applied;
     curve.push(equity);
+    appliedPnls.push(applied);
     if (equity < minEquity) minEquity = equity;
     if (equity <= 0n) bankrupt = true;
     if (applied < 0n) {
@@ -72,6 +85,23 @@ export function walkPath(opts: WalkOptions): PathOutcome {
     }
   }
 
+  const wins = appliedPnls.filter((p) => p > 0n).length;
+  const count = BigInt(appliedPnls.length);
+  const winRateBps = (BigInt(wins) * 10_000n) / count;
+  let sharpeX1e4: bigint | null = null;
+  if (appliedPnls.length >= 3) {
+    const sum = appliedPnls.reduce((s, p) => s + p, 0n);
+    const mean = sum / count;
+    let variance = 0n;
+    for (const p of appliedPnls) {
+      const d = p - mean;
+      variance += d * d;
+    }
+    variance /= count;
+    const sd = isqrt(variance);
+    if (sd > 0n) sharpeX1e4 = (mean * 10_000n) / sd;
+  }
+
   const maxDrawdown = start > minEquity ? start - minEquity : 0n;
   return {
     curve,
@@ -79,6 +109,8 @@ export function walkPath(opts: WalkOptions): PathOutcome {
     maxDrawdown,
     maxDrawdownBps: (maxDrawdown * 10_000n) / start,
     maxLosingStreak: maxStreak,
+    winRateBps,
+    sharpeX1e4,
     bankruptcy: bankrupt,
   };
 }

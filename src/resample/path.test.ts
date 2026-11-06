@@ -70,3 +70,31 @@ test("walkPath validates starting equity and cap", () => {
   assert.throws(() => walkPath({ order: [], start: 0n, sizing: "static" }), /positive/);
   assert.throws(() => walkPath({ order: [], start: start, sizing: "compound", compoundCapMultiple: 0n }), /cap/);
 });
+
+test("win rate and per-trade Sharpe are pinned exactly on a fixed order", () => {
+  // wins 2 of 4 -> 5000 bps. mean pnl = (3-1-1+3)/4 = 1; deviations (2,-2,-2,2);
+  // variance = 16/4 = 4; sd = 2; sharpe = 1*10000/2 = 5000. Every step is exact bigint.
+  const trades: PathTrade[] = [{ pnl: 3n }, { pnl: -1n }, { pnl: -1n }, { pnl: 3n }];
+  const out = walkPath({ order: trades, start: 100n, sizing: "static" });
+  assert.equal(out.winRateBps, 5000n);
+  assert.equal(out.sharpeX1e4, 5000n);
+});
+
+test("Sharpe is null when the applied PnLs do not vary and when the horizon is under three", () => {
+  const flat: PathTrade[] = [{ pnl: 2n }, { pnl: 2n }, { pnl: 2n }];
+  const flatOut = walkPath({ order: flat, start: 100n, sizing: "static" });
+  assert.equal(flatOut.winRateBps, 10000n);
+  assert.equal(flatOut.sharpeX1e4, null);
+  const two: PathTrade[] = [{ pnl: 5n }, { pnl: -1n }];
+  const twoOut = walkPath({ order: two, start: 100n, sizing: "static" });
+  assert.equal(twoOut.sharpeX1e4, null);
+});
+
+test("win rate is computed over applied PnLs, not raw order PnLs", () => {
+  // Under compound sizing the second trade's applied PnL is +11 (10 scaled by 110/100),
+  // not the raw +10. Both applied PnLs are positive, so the rate is full.
+  const trades: PathTrade[] = [{ pnl: 10n }, { pnl: 10n }];
+  const out = walkPath({ order: trades, start: 100n, sizing: "compound" });
+  assert.equal(out.winRateBps, 10000n);
+  assert.equal(out.finalEquity, 121n); // 100 -> 110 -> 121, per the compound test above
+});

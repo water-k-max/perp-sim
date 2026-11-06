@@ -133,7 +133,7 @@ export function ResamplePanel({ data }: { data: Result }) {
     <div className="tablist" role="tablist" aria-label="Resampling views">{tabNames.map(name => <button key={name} type="button" role="tab" aria-selected={active === name} data-tab={name} onClick={() => setActive(name)}>{({ distribution: 'Distribution', audit: 'Fill check', sizing: 'Sizing', oos: 'Out-of-sample' } as const)[name]}</button>)}</div>
 
     <div role="tabpanel" hidden={active !== 'distribution'}>
-      {dists.length > 1 && <div className="segmented resample-mode">{dists.map(d => <label key={d.mode}><input type="radio" name="resample-mode" checked={mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode === 'shuffle_without_replacement' ? 'Shuffle (no replacement)' : 'Bootstrap (with replacement)'}</span></label>)}</div>}
+      {dists.length > 1 && <div className="segmented resample-mode">{dists.map(d => <label key={d.mode}><input type="radio" name="resample-mode" checked={mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode === 'shuffle_without_replacement' ? 'Shuffle (no replacement)' : d.mode === 'block_bootstrap_with_replacement' ? 'Block bootstrap (streaks)' : 'Bootstrap (with replacement)'}</span></label>)}</div>}
       {dist && <>
         <FanChart dist={dist} quote={data.quoteSymbol} original={original} />
         <div className="metrics">
@@ -143,6 +143,8 @@ export function ResamplePanel({ data }: { data: Result }) {
           <Stat label="Bankruptcy rate" value={`${(Number(dist.bankruptcyRate) * 100).toFixed(1)}%`} />
           <Stat label="Median max drawdown" value={`${number(dist.medianMaxDrawdownBps / 100, 1)}%`} />
           <Stat label="Median losing streak" value={String(dist.medianMaxLosingStreak)} />
+          <Stat label="Win rate p05 / p95" value={`${number(dist.p05WinRateBps / 100, 1)}% / ${number(dist.p95WinRateBps / 100, 1)}%`} title="Trade-order confidence interval for the win rate" />
+          <Stat label="Sharpe p05 / p95" value={dist.p05SharpeX1e4 === null || dist.medianSharpeX1e4 === null || dist.p95SharpeX1e4 === null ? '—' : `${number(dist.p05SharpeX1e4 / 10_000, 2)} / ${number(dist.p95SharpeX1e4 / 10_000, 2)}`} title="Trade-order confidence interval for per-trade Sharpe" />
         </div>
         <div className="resample-histograms">
           <Histogram values={dist.finalEquities.map(Number)} label={`Final equity (${data.quoteSymbol})`} />

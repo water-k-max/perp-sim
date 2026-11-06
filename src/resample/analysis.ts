@@ -53,7 +53,7 @@ export function parseResampleRequest(value: unknown): ResampleRequest {
     throw new Error(`resample paths must be a whole number in [${RESAMPLE_PATHS_MIN}, ${RESAMPLE_PATHS_MAX}].`);
   }
   const mode = v.mode ?? "both";
-  if (mode !== "both" && !isResampleMode(mode)) throw new Error("resample mode must be shuffle_without_replacement, bootstrap_with_replacement or both.");
+  if (mode !== "both" && !isResampleMode(mode)) throw new Error("resample mode must be shuffle_without_replacement, bootstrap_with_replacement, block_bootstrap_with_replacement or both.");
   const sizing = v.sizing ?? "static";
   if (sizing !== "static" && sizing !== "compound") throw new Error("resample sizing must be static or compound.");
   const horizonTrades = v.horizonTrades === undefined || v.horizonTrades === null ? null : Number(v.horizonTrades);
@@ -89,11 +89,18 @@ export type DistributionBlock = {
   p95MaxDrawdownBps: number;
   medianMaxLosingStreak: number;
   p95MaxLosingStreak: number;
+  /** Trade-order confidence intervals: per-path win rate (bps) and per-trade Sharpe (×10⁴). */
+  p05WinRateBps: number;
+  medianWinRateBps: number;
+  p95WinRateBps: number;
+  p05SharpeX1e4: number | null;
+  medianSharpeX1e4: number | null;
+  p95SharpeX1e4: number | null;
   fan: { step: number; p10: string; p25: string; p50: string; p75: string; p90: string }[];
 };
 
 export type ResampleAnalysis = {
-  version: 1;
+  version: 2;
   meta: {
     seed: string;
     paths: number;
@@ -169,6 +176,12 @@ export function distributionBlock(mode: ResampleMode, summary: PathSummary, quot
     p95MaxDrawdownBps: summary.p95MaxDrawdownBps,
     medianMaxLosingStreak: summary.medianMaxLosingStreak,
     p95MaxLosingStreak: summary.p95MaxLosingStreak,
+    p05WinRateBps: summary.p05WinRateBps,
+    medianWinRateBps: summary.medianWinRateBps,
+    p95WinRateBps: summary.p95WinRateBps,
+    p05SharpeX1e4: summary.p05SharpeX1e4,
+    medianSharpeX1e4: summary.medianSharpeX1e4,
+    p95SharpeX1e4: summary.p95SharpeX1e4,
     fan: summary.fan.map((band) => ({
       step: band.step,
       p10: f6(band.p10),
@@ -277,7 +290,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
   }
 
   return {
-    version: 1,
+    version: 2,
     meta: {
       seed,
       paths: request.paths,
