@@ -1,4 +1,4 @@
-import type { FillRow, PerpFeeRecord, SomniaMarketsClient } from "@somnia-chain/markets-sdk";
+import type { FillRow, PerpFeeRecord, PerpPositionChange, SomniaMarketsClient } from "@somnia-chain/markets-sdk";
 import { fillFee, PositionBook } from "../engine/portfolio.js";
 import { feeBps, type MarketConfig } from "../history/market.js";
 import { retryRead } from "../retry.js";
@@ -65,9 +65,15 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
   const pool = cfg.pool.toLowerCase();
 
   const fills = await readAccountFills(client, who, pool, fromSec, toSec, maxFills, warnings);
-  const changes = await retryRead("listPerpPositionChangesForFills", () =>
-    client.listPerpPositionChangesForFills(who, fills),
-  );
+  // The SDK caps one position-change read at 1,000 fills; chunk to stay under it, keeping
+  // the one-to-one order so changes[i] still lines up with fills[i].
+  const changes: (PerpPositionChange | null)[] = [];
+  for (let at = 0; at < fills.length; at += 1_000) {
+    const part = await retryRead(`listPerpPositionChangesForFills ${at}`, () =>
+      client.listPerpPositionChangesForFills(who, fills.slice(at, at + 1_000)),
+    );
+    changes.push(...part);
+  }
 
   const feeRows = await retryRead("listPerpFees", () =>
     client.listPerpFees({ account: who, pool, limit: 1_000 }),
