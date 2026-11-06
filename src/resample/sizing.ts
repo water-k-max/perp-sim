@@ -1,5 +1,5 @@
 /**
- *  Sizing module (spec §6): how many base units, for the loss you would accept.
+ *  Sizing module design doc: how many base units, for the loss you would accept.
  *
  *  For each candidate size — a multiple of the market's lot grid — every resampled path is
  *  re-walked with each trade's PnL scaled to that size (`pnl * size / tradeSize`, floored),

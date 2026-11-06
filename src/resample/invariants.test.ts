@@ -61,7 +61,6 @@ test("a fresh analysis passes all three resample invariants", () => {
     "resample-deterministic": "pass",
     "resample-bounds": "pass",
     "oos-no-lookahead": "pass",
-    "prop-bounds": "skip",
   });
 });
 
@@ -113,31 +112,3 @@ test("a document without an oos block skips, never fails, the lookahead check", 
   assert.equal(statuses(list)["oos-no-lookahead"], "skip");
 });
 
-test("a prop document passes prop-bounds; a tampered share fails it", () => {
-  const { inputs } = fixture();
-  inputs.request = parseResampleRequest({ seed: "invariant-fixture", paths: 96, prop: { dailyLossLimit: "5", drawdownLimit: "50", phases: [{ profitTarget: "1" }] } });
-  const analysis = buildResampleAnalysis(inputs);
-  assert.notEqual(analysis.prop, null);
-  const fresh = checkResample(analysis, inputs);
-  assert.equal(statuses(fresh)["prop-bounds"], "pass");
-
-  const funded = analysis.prop!.outcomes.find((o) => o.outcome === "funded")!;
-  const other = analysis.prop!.outcomes.find((o) => o.outcome !== "funded")!;
-  other.share = (Number(funded.share) + 0.2).toFixed(4); // shares no longer sum to 1
-  const list = checkResample(analysis, inputs);
-  assert.equal(statuses(list)["prop-bounds"], "fail");
-});
-
-test("a payout block without any funded path fails prop-bounds", () => {
-  const { inputs } = fixture();
-  inputs.request = parseResampleRequest({ seed: "invariant-fixture", paths: 96, prop: { dailyLossLimit: "5", drawdownLimit: "50", phases: [{ profitTarget: "1" }] } });
-  const analysis = buildResampleAnalysis(inputs);
-  const funded = analysis.prop!.outcomes.find((o) => o.outcome === "funded")!;
-  const receiver = analysis.prop!.outcomes.find((o) => o.outcome !== "funded")!;
-  receiver.share = (Number(receiver.share) + Number(funded.share)).toFixed(4);
-  funded.share = "0.0000"; // shares still sum to 1, but no path funds and payouts remain
-  analysis.prop!.payouts = { cadence: "one_time", feeBps: 0, average: "1", bad: "1" };
-  const list = checkResample(analysis, inputs);
-  assert.equal(statuses(list)["prop-bounds"], "fail");
-  assert.match(list.find((i) => i.id === "prop-bounds")!.detail, /no funded path/);
-});

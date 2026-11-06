@@ -70,7 +70,6 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
         horizonTrades: null,
         acceptedLoss: null,
         holdbackFraction: 0.3,
-        prop: null,
       };
     }
     onRun(body);

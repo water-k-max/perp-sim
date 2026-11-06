@@ -1,19 +1,14 @@
 /**
- *  Out-of-sample module (spec §7): the backtest audits itself.
+ *  Out-of-sample check: the trade list tests itself.
  *
- *  The tail of the trade list (holdback fraction) is held back. The fit trades are
- *  resampled with replacement at fixed size and the 95th percentile of the fit path
- *  finals becomes the boundary — one healthy strategy in twenty crosses a 5% boundary by
- *  chance. The held-back trades then replay chronologically, as if they were the first
- *  live ones, and the verdict compares the held final against the boundary.
+ *  The tail of the list (holdback fraction) is held back. The earlier trades are bootstrapped
+ *  at fixed size, and the 95th percentile of those path finals becomes the boundary; a sound
+ *  strategy still crosses a 5% boundary about one time in twenty. The held-back trades then
+ *  replay in order, as if they were the first live ones, and the held final is compared with
+ *  the boundary.
  *
- *  Verdict framing, kept verbatim in spirit: staying inside is *not* proof of an edge;
- *  crossing is a reason to investigate what changed before money is at risk. Both halves
- *  come from the same run, so both inherit its biases.
- *
- *  No look-ahead is structural: the fit half is a prefix slice of the trade list, so held
- *  trades cannot influence fit statistics. The `fitSeqs`/`heldSeqs` records let the
- *  `oos-no-lookahead` invariant re-verify that from the persisted JSON.
+ *  Staying inside is not proof of an edge. Crossing is a reason to investigate what changed.
+ *  Both halves come from the same run, so both inherit its biases.
  */
 
 import type { TradeRecord } from "./inputs.js";
@@ -69,7 +64,7 @@ export function runOos(opts: OosOptions): OosResult {
   const { fit, held } = splitHoldback(opts.trades, opts.holdbackFraction);
   const horizon = opts.horizon ?? fit.length;
 
-  // Fit half: bootstrap with replacement, static sizing — spec §7 step 2.
+  // Fit half: bootstrap with replacement, static sizing — design doc step 2.
   const fitPaths = simulatePaths({
     trades: fit.map((t) => ({ pnl: t.pnl })),
     mode: "bootstrap_with_replacement",

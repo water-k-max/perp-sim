@@ -18,7 +18,7 @@ function FanChart({ block, quote, original }: { block: ResampleBlock; quote: str
     return () => observer.disconnect();
   }, []);
   const dist = block.distributions[0];
-  if (!dist) return <p className="muted">The trade list was empty, so there is no distribution to chart.</p>;
+  if (!dist) return <p className="muted">No trades to chart.</p>;
   const fan = dist.fan.map(b => ({ step: b.step, p10: Number(b.p10), p25: Number(b.p25), p50: Number(b.p50), p75: Number(b.p75), p90: Number(b.p90) })) as Band[];
   const height = 240;
   const geometry = fanGeometry(fan, width, height, 44, width - 12, 14, height - 34);
@@ -40,7 +40,7 @@ function FanChart({ block, quote, original }: { block: ResampleBlock; quote: str
   </div>;
 }
 
-function Histogram({ values, label }: { values: number[]; label: string }) {
+export function Histogram({ values, label }: { values: number[]; label: string }) {
   const bins = useMemo(() => histogram(values, 12), [values]);
   if (!bins.length) return null;
   const max = Math.max(...bins.map(b => b.count));
@@ -54,11 +54,11 @@ function Histogram({ values, label }: { values: number[]; label: string }) {
   </figure>;
 }
 
-function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
+export function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
   return <article className="panel metric"><h4>{label}</h4><strong title={title}>{value}</strong></article>;
 }
 
-const tabNames = ['distribution', 'audit', 'sizing', 'oos', 'prop'] as const;
+const tabNames = ['distribution', 'audit', 'sizing', 'oos'] as const;
 
 export function ResamplePanel({ data }: { data: Result }) {
   const runId = data.manifest?.runId;
@@ -83,7 +83,7 @@ export function ResamplePanel({ data }: { data: Result }) {
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok || !record(payload) || payload.resample === undefined) {
-        throw new Error(record(payload) && typeof payload.error === 'string' ? payload.error : `Request failed (HTTP ${response.status}). Please retry.`);
+        throw new Error(record(payload) && typeof payload.error === 'string' ? payload.error : `Request failed (HTTP ${response.status}).`);
       }
       setOverride(validateResample(payload.resample));
     } catch (err) {
@@ -120,14 +120,14 @@ export function ResamplePanel({ data }: { data: Result }) {
 
   return <section id="resample-panel" className="panel resample" aria-label="Trade-order resampling">
     <div className="panel-heading"><div><h3>Trade-order resampling</h3><p className="muted">Seed <code>{block.meta.seed.slice(0, 16)}…</code> · {block.meta.paths} paths · {block.meta.mode === 'both' ? 'shuffle + bootstrap' : block.meta.mode.replace(/_/g, ' ')} · {block.meta.sizing} sizing · horizon {block.meta.horizonTrades} trades</p></div><div className="badges"><span className="pill" hidden={block.meta.paths >= 5000} title="With fewer than 5,000 paths the tail figures move noticeably with the seed.">MODELLED DISTRIBUTION</span><span className="pill">SEEDED</span></div></div>
-    <p className="muted">These distributions model <strong>trade-order risk</strong> on the recorded trade list — they are not a forecast of future PnL.</p>
+    <p className="muted">Trade-order risk on the recorded trades. Not a forecast.</p>
     <div className="resample-controls">
       <label htmlFor="resample-rerun-seed">Re-run with a new seed</label>
       <input id="resample-rerun-seed" type="text" value={seed} onChange={e => setSeed(e.target.value)} placeholder="leave blank to derive from the run id" />
       <button type="button" className="secondary" disabled={busy || !runId} onClick={() => void rerun()}>{busy ? 'Resampling…' : 'Re-run'}</button>
     </div>
     <p className="error" role="alert" hidden={error === null}>{error}</p>
-    <div className="tablist" role="tablist" aria-label="Resampling views">{tabNames.map(name => <button key={name} type="button" role="tab" aria-selected={active === name} data-tab={name} onClick={() => setActive(name)}>{({ distribution: 'Distribution', audit: 'Optimism audit', sizing: 'Sizing', oos: 'Out-of-sample', prop: 'Prop eval' } as const)[name]}</button>)}</div>
+    <div className="tablist" role="tablist" aria-label="Resampling views">{tabNames.map(name => <button key={name} type="button" role="tab" aria-selected={active === name} data-tab={name} onClick={() => setActive(name)}>{({ distribution: 'Distribution', audit: 'Fill check', sizing: 'Sizing', oos: 'Out-of-sample' } as const)[name]}</button>)}</div>
 
     <div role="tabpanel" hidden={active !== 'distribution'}>
       {dists.length > 1 && <div className="segmented resample-mode">{dists.map(d => <label key={d.mode}><input type="radio" name="resample-mode" checked={mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode === 'shuffle_without_replacement' ? 'Shuffle (no replacement)' : 'Bootstrap (with replacement)'}</span></label>)}</div>}
@@ -150,13 +150,13 @@ export function ResamplePanel({ data }: { data: Result }) {
     <div role="tabpanel" hidden={active !== 'audit'}>
       <div className="metrics">
         <Stat label="Same-bar share" value={`${number(block.audit.sameBarShareBps / 100, 1)}%`} title={`${block.input.sameBarCount} of ${block.input.tradeCount} trades entered and exited inside one settlement bar`} />
-        <Stat label="Dismissal" value={block.audit.dismissed ? 'NOT RELIABLY BACKTESTABLE' : 'WITHIN THRESHOLD'} />
-        <Stat label="Re-priced same-bar" value={String(block.audit.repricedCount)} />
-        <Stat label="Median delta" value={`${number(block.audit.repricedMedianDeltaBps / 100, 1)}%`} title="Median final equity change after adverse re-pricing, in percent" />
+        <Stat label="Verdict" value={block.audit.fillBasis === 'observed' ? 'N/A · OBSERVED FILLS' : block.audit.dismissed ? 'TOO MANY SAME-BAR TRADES' : 'WITHIN THRESHOLD'} />
+        <Stat label="Stress-priced trades" value={block.audit.fillBasis === 'observed' ? '—' : String(block.audit.repricedCount)} />
+        <Stat label="Median delta" value={block.audit.fillBasis === 'observed' ? '—' : `${number(block.audit.repricedMedianDeltaBps / 100, 1)}%`} title="Median final equity change after adverse re-pricing, in percent" />
       </div>
-      <h4>Assumptions this run leans on</h4>
+      <h4>Assumptions in this run</h4>
       <ul className="warnings">{block.assumptions.length ? block.assumptions.map((line, i) => <li key={i}>{line}</li>) : <li>None of the tracked flatterers applied: the run carries latency, gas, a non-optimistic profile and intrabar marking.</li>}</ul>
-      <h4>What the audit cannot see</h4>
+      <h4>Limits of this check</h4>
       <ul className="warnings">{block.audit.notes.map((line, i) => <li key={i}>{line}</li>)}</ul>
       {block.audit.repricedFinalEquities.length > 0 && <p className="muted">Re-priced distribution finals are stored with the analysis; the median moved {number(block.audit.repricedMedianDeltaBps / 100, 1)}%.</p>}
     </div>
@@ -167,7 +167,7 @@ export function ResamplePanel({ data }: { data: Result }) {
         <thead><tr><th scope="col">Size ({data.market})</th><th scope="col">Loss probability</th><th scope="col">Median PnL</th><th scope="col">p05 PnL</th></tr></thead>
         <tbody>{block.sizing.rows.map((row, i) => <tr key={i}><td>{amount(row.sizeBase)}</td><td>{(Number(row.lossProbability) * 100).toFixed(1)}%</td><td className="num">{amount(row.medianPnl)}</td><td className="num">{amount(row.p05Pnl)}</td></tr>)}</tbody>
       </table></div>
-      {block.sizing.rows.length === 0 && <p className="muted">The trade list was empty, so no sizing ladder was computed.</p>}
+      {block.sizing.rows.length === 0 && <p className="muted">No trades to size.</p>}
       {block.sizing.note && <p className="muted">{block.sizing.note}</p>}
     </div>
 
@@ -188,94 +188,8 @@ export function ResamplePanel({ data }: { data: Result }) {
       </>}
     </div>
 
-    <div role="tabpanel" hidden={active !== 'prop'}>
-      <PropPanel block={block} quote={data.quoteSymbol} runId={runId} onResult={setOverride} />
-    </div>
 
     {block.warnings.length > 0 && <ul className="warnings" aria-label="Resampling warnings">{block.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}
   </section>;
 }
 
-const outcomeLabels: Record<string, string> = {
-  funded: 'Funded',
-  breach_daily_loss: 'Breach — daily loss',
-  breach_drawdown: 'Breach — drawdown',
-  lockout: 'Lockout (consistency)',
-  expired: 'Expired (day cap)',
-  idle: 'Idle',
-};
-
-function PropPanel({ block, quote, runId, onResult }: { block: ResampleBlock; quote: string; runId: string | undefined; onResult: (b: ResampleBlock) => void }) {
-  const [dailyLoss, setDailyLoss] = useState('5');
-  const [drawdownLimit, setDrawdownLimit] = useState('50');
-  const [target, setTarget] = useState('5');
-  const [feeBps, setFeeBps] = useState('0');
-  const [cadence, setCadence] = useState<'monthly' | 'one_time'>('one_time');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const prop = block.prop ?? null;
-
-  async function run() {
-    if (!runId || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/resample', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          runId,
-          resample: {
-            seed: block.meta.seed, paths: block.meta.paths, mode: block.meta.mode, sizing: block.meta.sizing,
-            prop: { dailyLossLimit: dailyLoss, drawdownLimit, phases: [{ profitTarget: target }], payoutCadence: cadence, payoutFeeBps: Number(feeBps) || 0 },
-          },
-        }),
-      });
-      const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok || !record(payload) || payload.resample === undefined) {
-        throw new Error(record(payload) && typeof payload.error === 'string' ? payload.error : `Request failed (HTTP ${response.status}). Please retry.`);
-      }
-      onResult(validateResample(payload.resample));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return <>
-    <p className="muted">A prop evaluation replays the strategy&apos;s <strong>own trading days</strong> against typed-in rules. It predicts nothing about any firm&apos;s challenge.</p>
-    <div className="resample-controls" id="prop-rules">
-      <label htmlFor="prop-daily-loss">Daily loss limit ({quote})</label>
-      <input id="prop-daily-loss" type="text" value={dailyLoss} onChange={e => setDailyLoss(e.target.value)} />
-      <label htmlFor="prop-drawdown">Max drawdown ({quote})</label>
-      <input id="prop-drawdown" type="text" value={drawdownLimit} onChange={e => setDrawdownLimit(e.target.value)} />
-      <label htmlFor="prop-target">Phase profit target ({quote})</label>
-      <input id="prop-target" type="text" value={target} onChange={e => setTarget(e.target.value)} />
-      <label htmlFor="prop-fee">Payout fee (bps)</label>
-      <input id="prop-fee" type="text" value={feeBps} onChange={e => setFeeBps(e.target.value)} />
-      <label htmlFor="prop-cadence">Payout cadence</label>
-      <select id="prop-cadence" value={cadence} onChange={e => setCadence(e.target.value as 'monthly' | 'one_time')}>
-        <option value="one_time">One time at funding</option>
-        <option value="monthly">Monthly</option>
-      </select>
-      <button type="button" className="secondary" disabled={busy || !runId} onClick={() => void run()}>{busy ? 'Evaluating…' : prop ? 'Re-run evaluation' : 'Run evaluation'}</button>
-    </div>
-    <p className="error" role="alert" hidden={error === null}>{error}</p>
-    {prop === null
-      ? <p className="muted">No evaluation yet — set the rules and run. MODELLED EVALUATION: outcomes describe resampled replays of recorded days, not the future.</p>
-      : <>
-        <div className="metrics">
-          <Stat label="Funded share" value={`${(Number(prop.fundedShare) * 100).toFixed(1)}%`} title={`Share of ${block.meta.paths} resampled evaluations that reached the profit target`} />
-          <Stat label="Expected resets" value={prop.expectedResets === null ? '—' : number(prop.expectedResets, 2)} title="Restarts before one evaluation funds: (1 − funded share) / funded share" />
-          <Stat label="Trades to fund (median)" value={prop.tradesToFund === null ? '—' : number(prop.tradesToFund.median, 0)} title={prop.tradesToFund === null ? 'No funded path' : `p05 ${prop.tradesToFund.p05} / p95 ${prop.tradesToFund.p95}`} />
-          <Stat label={`Payout / ${prop.payouts?.cadence === 'monthly' ? 'month' : 'evaluation'}`} value={prop.payouts === null ? '—' : `${amount(prop.payouts.average)} ${quote}`} title={prop.payouts === null ? 'No funded path' : `Bad month (p05): ${amount(prop.payouts.bad)} ${quote} after ${prop.payouts.feeBps} bps fee`} />
-        </div>
-        <div className="table-wrap"><table>
-          <thead><tr><th scope="col">Outcome</th><th scope="col">Share</th><th scope="col">Evaluations</th></tr></thead>
-          <tbody>{prop.outcomes.map(o => <tr key={o.outcome}><td>{outcomeLabels[o.outcome] ?? o.outcome}</td><td>{(Number(o.share) * 100).toFixed(1)}%</td><td className="num">{o.count}</td></tr>)}</tbody>
-        </table></div>
-        <ul className="warnings">{prop.notes.map((line, i) => <li key={i}>{line}</li>)}</ul>
-      </>}
-  </>;
-}

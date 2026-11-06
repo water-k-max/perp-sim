@@ -1,5 +1,5 @@
 /**
- *  The equity walker: one resampled path as an exact integer accumulation (spec §3).
+ *  The equity walker: one resampled path as an exact integer accumulation design doc.
  *
  *  A path is a sequence of `horizon` trades in a drawn order, walked at the chosen sizing.
  *  `static` applies each trade's exact PnL as-is; `compound` scales each PnL by the running

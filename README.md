@@ -56,6 +56,10 @@ The server binds to local loopback, accepts one replay at a time, caps request b
 
 The NOVA artwork is supplied by the project owner in `public/nova-storyboard.png`.
 
+## Resampling a real account
+
+`GET /api/accounts/<ADDRESS>/resample?market=BTC&days=14&paths=1000&cash=1000&seed=` replays the account's fills through the position book, takes each closing fill's realized PnL as one trade, and runs shuffle and bootstrap Monte Carlo over that list. It is read-only and deterministic: the same account, window and seed give the same distributions. PnL is the chain's gross realized figure, so fees and funding are not deducted, and fewer than 30 closed trades is flagged as unstable. The "Analyse a wallet" panel in the UI calls it.
+
 ## Fill models
 
 `--model settlement-mark` (default) prices each order at the next settlement mark. It is simple, fully reproducible, and deliberately labelled as *not* a book fill.
@@ -160,7 +164,7 @@ pnpm test:units && pnpm test:web && pnpm test:engine && pnpm test:data && pnpm t
 - **Gas is a constant** (`--gas`), not a measured cost.
 - **Markouts are hourly only.** The 60-second candle series is not ingested, so 1 m and 5 m markouts are not reported.
 - **Fills are modelled, not executed.** A tape fill estimates what a small taker could have got; it is not a record of a real order. The forced end-of-run close is priced at the final settlement mark (the fills table marks it `tape prints: mark`) and the result says so in its warnings.
-- **One position at a time.** Cross-market margin, ADL, insurance funds, and multi-leg portfolios are out of scope, as are parameter sweeps, walk-forward and Monte Carlo (planned separately).
+- **One position at a time.** Cross-market margin, ADL, insurance funds, and multi-leg portfolios are out of scope, as are parameter sweeps and walk-forward. Monte Carlo trade-order resampling is implemented (`src/resample/`).
 - **Fees recorded on this testnet have been zero.** Nonzero taker/maker rates are implemented and unit-tested but have not been observed in a live charging pool.
 - Indexer/RPC availability, incomplete history and changing chain state affect results; a truncated read is surfaced rather than hidden.
 - The frontend is local-only. Public deployment and refreshed submission packaging remain separate release tasks.

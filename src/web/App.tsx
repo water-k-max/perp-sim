@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Configuration } from './Configuration.js';
+import { WalletPanel } from './Wallet.js';
 import { Results } from './Results.js';
 import { record, validateResponse, type RequestDTO, type Result } from './dto.js';
 import { clearHistory, rememberRun, type HistoryEntry } from './history.js';
@@ -35,14 +36,14 @@ export function App() {
     if (running.current) return;
     running.current = true;
     setBusy(true); lastRequest.current = { ...request }; setExportReady(false); setError(null);
-    setActivity(result ? 'Running a new simulation. Showing previous results below.' : 'Fetching historical data and calculating the replay…');
+    setActivity(result ? 'Running. Previous results stay below.' : 'Running…');
     setBadge(result ? 'PREVIOUS RESULT' : 'RUNNING');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 180000);
     try {
       const response = await fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(request), signal: controller.signal });
       let data: unknown;
-      try { data = await response.json(); } catch { throw new Error(`The server returned an unreadable response (HTTP ${response.status}). Please retry.`); }
+      try { data = await response.json(); } catch { throw new Error(`Unreadable response (HTTP ${response.status}).`); }
       if (!response.ok) {
         throw new Error(record(data) && typeof data.error === 'string' ? data.error : record(data) && typeof data.message === 'string' ? data.message : `Request failed (HTTP ${response.status}). Please retry.`);
       }
@@ -50,12 +51,12 @@ export function App() {
       setResult(next); setHistory(rememberRun(next)); setExportReady(true);
       const noFill = (next.orders || []).some(o => o.status === 'rejected' && o.tag === 'entry') && (next.fills || []).length === 0;
       setBadge(noFill ? 'NO FILL' : next.complete ? 'RUN COMPLETE' : 'PARTIAL RESULT');
-      setActivity(next.complete ? 'Simulation finished. Results are ready.' : 'Simulation returned partial results. Review data coverage.');
+      setActivity(next.complete ? 'Done.' : 'Partial result. Check data coverage.');
       if (window.matchMedia('(max-width: 650px)').matches) navigateSetup(false);
     } catch (error) {
       setSetupOpen(true);
-      setError(error instanceof Error && error.name === 'AbortError' ? 'The request timed out after three minutes. Please retry.' : error instanceof TypeError ? 'Could not reach the backtest service. Check your connection and retry.' : error instanceof Error ? error.message : String(error));
-      setActivity(result ? 'The new run failed. Previous results remain below; they do not reflect the current setup.' : 'No results yet. Resolve the error or retry your request.');
+      setError(error instanceof Error && error.name === 'AbortError' ? 'Timed out after 3 minutes.' : error instanceof TypeError ? 'Cannot reach the backtest service.' : error instanceof Error ? error.message : String(error));
+      setActivity(result ? 'Run failed. Results below are from the previous run.' : 'Run failed.');
       setBadge(result ? 'PREVIOUS RESULT' : 'RUN FAILED');
     } finally {
       clearTimeout(timeout); running.current = false; setBusy(false);
@@ -89,6 +90,7 @@ export function App() {
         <Configuration mobile={mobile} open={setupOpen} hasResults={!!result} onEdit={() => navigateSetup(true)} onShowResults={() => navigateSetup(false)} busy={busy} error={error} onError={setError} onRun={request => { void run(request); }} onRetry={() => { if (lastRequest.current) void run(lastRequest.current); }} />
         <Results onEdit={() => navigateSetup(true)} data={result} busy={busy} badge={badge} activity={activity} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
       </div>
+      <WalletPanel />
       <details className="panel methodology"><summary>Know what you’re measuring <span>Methodology &amp; assumptions</span></summary><div><p>This is a historical replay of a declared strategy, not a live trade. Starting cash and base-asset size are independent inputs; the market determines the quote currency.</p><p>With the trade-tape model, each order is filled against the pool’s own recorded trades inside a window that opens after the decision plus latency, capped by a share of the volume traded in that window. Nothing is executed and no order book depth is replayed, so fills are modelled, not simulated queue positions.</p><p>Ending equity reflects price PnL, signed funding, taker and maker fees, and gas. Attribution must sum to the equity change exactly; a non-zero residual is reported as a failed invariant, never rounded away. Check settlement gaps, index-derived marks and candle coverage before interpreting results.</p></div></details>
       <footer className="main-footer"><span>NOVA PROTOCOL <span className="muted">/ Backtest Lab</span></span><span>Research, not financial advice.</span></footer>
     </main>

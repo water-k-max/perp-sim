@@ -1,5 +1,5 @@
 /**
- *  Forward-test analog (spec §8): land a public account's live fills against the stored
+ *  Forward-test analog design doc: land a public account's live fills against the stored
  *  resample band from the same strategy configuration.
  *
  *  There is no TradingView webhook here; the native source is better — the indexer's

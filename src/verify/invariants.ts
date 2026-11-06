@@ -145,7 +145,7 @@ export function invariantsOk(list: readonly Invariant[]): boolean {
 }
 
 /**
- *  Invariants over a resample analysis document (spec §11). Determinism is checked by
+ *  Invariants over a resample analysis document design doc. Determinism is checked by
  *  rebuilding the document from the same inputs and demanding a bit-identical value; the
  *  bounds and no-lookahead checks are structural on the artifact itself, so a tampered
  *  document fails even in isolation.
@@ -210,25 +210,5 @@ export function checkResample(analysis: ResampleAnalysis, inputs: AnalysisInputs
     );
   }
 
-  if (analysis.prop === null) {
-    out.push({ id: "prop-bounds", status: "skip", severity: "error", detail: "no prop-evaluation block in this analysis" });
-  } else {
-    const problems: string[] = [];
-    let shareSum = 0;
-    let fundedShare = 0;
-    for (const o of analysis.prop.outcomes) {
-      const share = Number(o.share);
-      if (!(share >= 0 && share <= 1)) problems.push(`outcome ${o.outcome} share ${o.share} outside [0, 1]`);
-      shareSum += share;
-      if (o.outcome === "funded") fundedShare = share;
-    }
-    if (Math.abs(shareSum - 1) > 0.001) problems.push(`outcome shares sum to ${shareSum.toFixed(4)}, not 1`);
-    if (analysis.prop.expectedResets !== null && !(Number(analysis.prop.expectedResets) >= 0))
-      problems.push(`expectedResets ${analysis.prop.expectedResets} is negative`);
-    if (fundedShare > 0 && analysis.prop.payouts === null) problems.push("funded paths exist but the payout block is empty");
-    if (fundedShare === 0 && analysis.prop.payouts !== null) problems.push("no funded path but a payout block is present");
-    if (analysis.prop.payouts !== null && analysis.prop.payouts.feeBps > 10_000) problems.push("payout fee exceeds 10000 bps");
-    verdict("prop-bounds", problems.length === 0, "error", problems[0] ?? `outcome shares sum to 1 across ${analysis.prop.outcomes.length} outcomes; funded share ${analysis.prop.fundedShare}`);
-  }
   return out;
 }

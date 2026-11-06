@@ -1,5 +1,5 @@
 /**
- *  Distribution statistics over a path set (spec §4).
+ *  Distribution statistics over a path set design doc.
  *
  *  Path equity stays bigint-exact end to end. Percentile interpolation is the single
  *  float step, done here on decimal values (`Number(value) / quoteScale`) — per the

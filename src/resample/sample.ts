@@ -1,5 +1,5 @@
 /**
- *  Trade-order drawing for the two resampling modes (spec §3).
+ *  Trade-order drawing for the two resampling modes design doc.
  *
  *  `shuffle_without_replacement` permutes the trade list, preserving the exact multiset —
  *  it answers "was the *order* lucky?". When a path's horizon exceeds the trade count the

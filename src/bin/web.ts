@@ -8,6 +8,8 @@ import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
 import { forwardStoredRun, forwardTestJson } from "../forward/forward.js";
 import { resampleStoredRun } from "../resample/service.js";
+import { resampleAccount } from "../resample/account.js";
+import { toRaw } from "../units.js";
 import { BodyTooLarge, SingleFlight, fetchSiteAllowed, hostAllowed, json, originAllowed, parsePublicOrigin, readJson, SECURITY_HEADERS } from "./http-kit.js";
 
 if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("NOVA Backtest Lab requires Node.js 22 or newer. Update the Node runtime on PATH before running pnpm dev.");
@@ -53,7 +55,7 @@ createServer(async (req, res) => {
       } catch (error) {
         if (error instanceof BacktestInputError) { json(res, 400, { error: error.message }); return; }
         console.error("Replay failed:", error instanceof Error ? error.message : "Unknown error");
-        json(res, 422, { error: "Replay unavailable. Retry when the Tokyo data service is available. Details are in the local server terminal." });
+        json(res, 422, { error: "Data service unavailable. Retry." });
       }
     } finally {
       flight.release();
@@ -129,7 +131,31 @@ createServer(async (req, res) => {
     } catch (error) {
       if (error instanceof Error && error.message === "No saved run with that id.") { json(res, 404, { error: "No saved run with that id." }); return; }
       console.error("Forward test failed:", error instanceof Error ? error.message : "Unknown error");
-      json(res, 422, { error: "Forward test unavailable. Details are in the local server terminal." });
+      json(res, 422, { error: "Forward test failed." });
+    } finally {
+      flight.release();
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/resample")) {
+    let account: string;
+    try { account = decodeURIComponent(url.pathname.slice("/api/accounts/".length, -"/resample".length)); }
+    catch { json(res, 400, { error: "A 0x-prefixed 20-byte account address is required." }); return; }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(account)) { json(res, 400, { error: "A 0x-prefixed 20-byte account address is required." }); return; }
+    const paths = Number(url.searchParams.get("paths") ?? 1000);
+    if (!Number.isInteger(paths) || paths < 100 || paths > 5000) { json(res, 400, { error: "paths must be a whole number from 100 to 5000." }); return; }
+    if (!flight.tryAcquire()) { json(res, 429, { error: "A replay is already running. Please wait and try again." }); return; }
+    try {
+      const client = createClient().client;
+      const market = await resolveConfig(client, selectMarket(await listPerps(client), url.searchParams.get("market") ?? "BTC"));
+      const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 14)));
+      const to = Math.floor(Date.now() / 1000);
+      const report = await reconcileAccount({ client, cfg: market, account, fromSec: to - days * 86_400, toSec: to });
+      json(res, 200, resampleAccount(report, { paths, seed: url.searchParams.get("seed") ?? "", start: toRaw(url.searchParams.get("cash") ?? "1000", market.quoteDecimals), quoteDecimals: market.quoteDecimals }));
+    } catch (error) {
+      console.error("Account resample failed:", error instanceof Error ? error.message : "Unknown error");
+      json(res, 422, { error: "Account resample failed." });
     } finally {
       flight.release();
     }
@@ -151,7 +177,7 @@ createServer(async (req, res) => {
       json(res, 200, report);
     } catch (error) {
       console.error("Reconciliation failed:", error instanceof Error ? error.message : "Unknown error");
-      json(res, 422, { error: "Reconciliation unavailable. Details are in the local server terminal." });
+      json(res, 422, { error: "Reconciliation failed." });
     } finally {
       flight.release();
     }

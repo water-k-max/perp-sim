@@ -65,7 +65,7 @@ test("saved report and engine reproduce without network; cash and intrabar chang
   await persistReplay(recaptured, input);
 });
 
-test("stored reports with a resample request replay byte-for-byte, including the prop block", async t => {
+test("stored reports with a resample request replay byte-for-byte", async t => {
   t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
   const request: RunRequest = {
     // A different cash changes the manifest config hash, so this run gets its own run id
@@ -75,12 +75,6 @@ test("stored reports with a resample request replay byte-for-byte, including the
     resample: {
       seed: "repro-seed", paths: 64, mode: "both", sizing: "static", horizonTrades: null,
       acceptedLoss: null, holdbackFraction: 0.3,
-      prop: {
-        startingBalance: null, drawdownMode: "trailing_eod", drawdownLocks: false,
-        dailyLossLimit: "50", drawdownLimit: "500",
-        phases: [{ profitTarget: "5", consistencyCapBps: null }],
-        payoutCadence: "one_time", payoutFeeBps: 500, maxDays: 30,
-      },
     },
   };
   const replay = await replayPrepared(request, cfg, dataset());

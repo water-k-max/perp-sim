@@ -1,12 +1,12 @@
 /**
  *  Trade-list extraction: a completed run's closed trades become the resampling engine's
- *  input records (spec §2).
+ *  input records design doc.
  *
  *  Better data than an exporter's CSV: pnl is the engine's exact net PnL (bigint quote
  *  units), entry/exit times come from the run's own clock, and MAE/MFE are *observed* —
- *  computed from the hourly candle extremes of every settlement bar the position lived
- *  through, falling back to the tape prints inside the holding window when a bar carries
- *  no candle path. The source used is recorded per trade, and a trade with no excursion
+ *  computed from the tape prints inside the exact holding window, falling back to the
+ *  hourly candle extremes of the settlement bars the position lived through (a coarser,
+ *  more pessimistic bound) when the tape has no print in that window. The source used is recorded per trade, and a trade with no excursion
  *  data at all is counted in `withoutExcursionCount` instead of being silently dropped.
  *
  *  `barsHeld` counts settlement bars between the entry bar and the exit bar; zero means
@@ -125,15 +125,18 @@ export function extractTrades(trades: readonly ClosedTrade[], opts: ExtractOptio
     const exitIdx = barIndexAt(bars, exitTs);
     const barsHeld = entryIdx === null || exitIdx === null ? 0 : exitIdx - entryIdx;
 
+    // Tape prints inside [entryTs, exitTs] are the exact holding window; a settlement bar's
+    // candle also spans time before entry and after exit, so it only overstates the adverse
+    // move. Candles are the fallback when the tape holds no print in the window.
     let excursion: { worst: bigint; best: bigint } | null = null;
     let source: ExcursionSource = "none";
-    if (entryIdx !== null && exitIdx !== null) {
-      excursion = excursionFromCandles(bars, entryIdx, exitIdx, side);
-      source = excursion !== null ? "candles" : "none";
-    }
-    if (excursion === null && tape.length > 0) {
+    if (tape.length > 0) {
       excursion = excursionFromTape(tape, entryTs, exitTs, side);
       source = excursion !== null ? "tape" : "none";
+    }
+    if (excursion === null && entryIdx !== null && exitIdx !== null) {
+      excursion = excursionFromCandles(bars, entryIdx, exitIdx, side);
+      source = excursion !== null ? "candles" : "none";
     }
 
     // Excursions as signed PnL at this trade's size; adverse is negative, as in the run's PnL.

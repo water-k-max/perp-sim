@@ -73,7 +73,7 @@ test("assumption lines name each quiet flatterer and its live consequence", () =
 });
 
 test("the audit re-run is deterministic and reprices only the adverse same-bar trades", () => {
-  const config = { fillModel: "tape" as const, profile: "realistic", latencySec: 1, gasPerTx: "0", intrabar: true };
+  const config = { fillModel: "settlement-mark" as const, profile: "realistic", latencySec: 1, gasPerTx: "0", intrabar: true };
   const opts = { paths: 32, horizon: 20, sizing: "static" as const, start: 100n * E18, seed: "audit-det", quoteScale: E18, oneBase };
   const list = listOf([
     rec({ sameBar: true, barsHeld: 0, pnl: 3n * E18, mae: -5n * E18, mfe: 1n * E18, worstPrice: 95n * E18, bestPrice: 101n * E18, excursionSource: "candles" }),
@@ -85,6 +85,21 @@ test("the audit re-run is deterministic and reprices only the adverse same-bar t
   assert.deepEqual(a, b);
   assert.equal(a.repricedCount, 1);
   assert.ok(a.repricedSummary!.medianFinalEquity < a.exportedSummary!.medianFinalEquity);
-  // The unbounded-case disclosure is always present, worded as the spec words it.
+  // The unbounded-case disclosure is always present, always present.
   assert.ok(a.notes.some((n) => n.includes("not a bound") && n.includes("stop and target")));
+});
+
+test("tape fills: same-bar share is context only, with no verdict and no re-pricing", () => {
+  const config = { fillModel: "tape" as const, profile: "realistic", latencySec: 1, gasPerTx: "0", intrabar: true };
+  const opts = { paths: 32, horizon: 20, sizing: "static" as const, start: 100n * E18, seed: "audit-tape", quoteScale: E18, oneBase, dismissalThresholdBps: 1 };
+  const list = listOf([
+    rec({ sameBar: true, barsHeld: 0, pnl: 3n * E18, mae: -5n * E18, mfe: 1n * E18, worstPrice: 95n * E18, bestPrice: 101n * E18, excursionSource: "tape" }),
+    rec({ pnl: 2n * E18 }),
+  ]);
+  const a = auditTradeList(list, config, opts);
+  assert.equal(a.fillBasis, "observed");
+  assert.equal(a.dismissed, false);
+  assert.equal(a.repricedCount, 0);
+  assert.equal(a.repricedFinalEquities.length, 0);
+  assert.ok(a.sameBarShareBps > 0);
 });

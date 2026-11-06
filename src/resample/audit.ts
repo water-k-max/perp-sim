@@ -1,17 +1,14 @@
 /**
- *  Backtest-optimism audit (spec §5): where the run's own assumptions are kinder than live.
+ *  Fill check: how much the run's results lean on fills that were assumed rather than observed.
  *
- *  Header figure: the same-bar trade share — trades decided inside one settlement
- *  interval, priced by the bar's path assumption rather than observed data. Above the
- *  dismissal threshold the strategy is labelled *not reliably backtestable*.
+ *  Settlement-mark runs price every fill at a mark nobody traded at. A trade that opens and
+ *  closes inside one settlement bar is then priced by an assumed path, so a high same-bar
+ *  share flags the strategy as too dependent on that assumption, and a stress re-run moves
+ *  each such trade that went against the position to the worst price it observed.
  *
- *  The "gone the other way" re-run moves every same-bar trade that provably went against
- *  the position to the worst price that position observed (keeping funding, fees and gas
- *  exact) and re-runs the distribution, so the exported and re-priced curves render side
- *  by side. That is a bounded worst-case, not a claim about what happened.
- *
- *  The disclosure lines are honest by construction: the same-bar count is what can be
- *  counted, never a bound, and the unbounded case is stated in the spec's own words.
+ *  Tape runs are different: every fill is a recorded print, so a short hold is real data.
+ *  The share is still reported as holding-time context, but no verdict is applied and
+ *  nothing is re-priced.
  */
 
 import type { TradeRecord, TradeList } from "./inputs.js";
@@ -47,8 +44,10 @@ export type AuditResult = {
   sameBarShareBps: number;
   withoutExcursionCount: number;
   dismissalThresholdBps: number;
-  /** True when the same-bar share reaches the threshold: not reliably backtestable. */
+  /** True when assumed fills are in play and the same-bar share reaches the threshold. */
   dismissed: boolean;
+  /** "observed" when fills are recorded tape prints; "assumed" when priced at a settlement mark. */
+  fillBasis: "observed" | "assumed";
   /** Same-bar trades that provably went against the position and were re-priced. */
   repricedCount: number;
   repricedFinalEquities: bigint[];
@@ -110,7 +109,8 @@ export function repriceSameBarAdverse(trades: readonly TradeRecord[], oneBase: b
 export function auditTradeList(list: TradeList, config: RunAssumptions, opts: AuditOptions): AuditResult {
   const threshold = opts.dismissalThresholdBps ?? DEFAULT_DISMISSAL_THRESHOLD_BPS;
   const shareBps = sameBarShareBps(list);
-  const dismissed = shareBps >= threshold && list.trades.length > 0;
+  const observed = config.fillModel === "tape";
+  const dismissed = !observed && shareBps >= threshold && list.trades.length > 0;
 
   const base = {
     mode: "shuffle_without_replacement" as const,
@@ -122,23 +122,24 @@ export function auditTradeList(list: TradeList, config: RunAssumptions, opts: Au
   };
   const empty = list.trades.length === 0;
   const exported = empty ? [] : simulatePaths({ trades: list.trades.map((t) => ({ pnl: t.pnl })), ...base });
-  const { trades: repricedTrades, repriced } = repriceSameBarAdverse(list.trades, opts.oneBase);
-  const repricedPaths = empty ? [] : simulatePaths({ trades: repricedTrades, ...base });
+  const skipReprice = empty || observed;
+  const { trades: repricedTrades, repriced } = skipReprice ? { trades: [], repriced: 0 } : repriceSameBarAdverse(list.trades, opts.oneBase);
+  const repricedPaths = skipReprice ? [] : simulatePaths({ trades: repricedTrades, ...base });
   const exportedSummary = empty ? null : summarizePaths(exported, opts.quoteScale);
-  const repricedSummary = empty ? null : summarizePaths(repricedPaths, opts.quoteScale);
+  const repricedSummary = skipReprice ? null : summarizePaths(repricedPaths, opts.quoteScale);
   const deltaBps =
     exportedSummary === null || repricedSummary === null || exportedSummary.medianFinalEquity === 0
       ? 0
       : ((repricedSummary.medianFinalEquity - exportedSummary.medianFinalEquity) * 10_000) /
         Math.abs(exportedSummary.medianFinalEquity);
 
-  const notes: string[] = [
-    "The same-bar count is what can be counted, not a bound: a longer trade whose final bar holds both stop and target has the same problem and is undetectable from the trade list.",
-  ];
-  if (list.trades.some((t) => t.sameBar && t.excursionSource !== "none")) {
+  const notes: string[] = observed
+    ? ["Fills are recorded tape prints, so a short hold is priced on observed trades, not an assumed path. The same-bar share is holding-time context only: no verdict is applied and nothing is re-priced."]
+    : ["The same-bar count is what can be counted, not a bound: a longer trade whose final bar holds both stop and target has the same problem and cannot be seen here."];
+  if (!observed && list.trades.some((t) => t.sameBar && t.excursionSource !== "none")) {
     notes.push("For same-bar trades the excursion is observed (candle path or tape prints), so the re-priced curve is a bounded worst-case for those trades, not a claim about what happened.");
   }
-  if (list.withoutExcursionCount > 0) {
+  if (!observed && list.withoutExcursionCount > 0) {
     notes.push(`${list.withoutExcursionCount} trade(s) carry no excursion data and cannot be re-priced; they are counted, not adjusted.`);
   }
 
@@ -149,6 +150,7 @@ export function auditTradeList(list: TradeList, config: RunAssumptions, opts: Au
     withoutExcursionCount: list.withoutExcursionCount,
     dismissalThresholdBps: threshold,
     dismissed,
+    fillBasis: observed ? "observed" : "assumed",
     repricedCount: repriced,
     repricedFinalEquities: repricedSummary?.finalEquities ?? [],
     repricedMedianDeltaBps: deltaBps,
