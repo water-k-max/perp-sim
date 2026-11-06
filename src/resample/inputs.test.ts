@@ -89,6 +89,30 @@ test("a bar without a candle path falls back to the tape prints in the window", 
   assert.equal(rec.bestPrice, 115n * E18);
 });
 
+test("tape prints outrank candle extremes when both cover the holding window", () => {
+  // The candle bars would say 90/110; tape prints inside the exact window say 97/104.
+  // A settlement bar spans time before entry and after exit, so its extremes overstate
+  // what the position could have seen — the tape window is the exact one and must win.
+  const bars = [bar(0, 90n * E18, 110n * E18), bar(1, 95n * E18, 105n * E18)];
+  const tape = [print(500, 70n * E18), print(1_500, 97n * E18), print(4_000, 104n * E18), print(9_999, 1n * E18)];
+  const rec = extractTrades([trade({})], { bars, tape, oneBase }).trades[0]!;
+  assert.equal(rec.excursionSource, "tape");
+  assert.equal(rec.worstPrice, 97n * E18);
+  assert.equal(rec.bestPrice, 104n * E18);
+  assert.equal(rec.mae, -3n * E18);
+  assert.equal(rec.mfe, 4n * E18);
+});
+
+test("tape with no print inside the holding window falls back to candles", () => {
+  // Prints exist, but only before entry and after exit: the candle path is the fallback.
+  const bars = [bar(0, 90n * E18, 110n * E18), bar(1, 95n * E18, 105n * E18)];
+  const tape = [print(200, 70n * E18), print(9_999, 130n * E18)];
+  const rec = extractTrades([trade({})], { bars, tape, oneBase }).trades[0]!;
+  assert.equal(rec.excursionSource, "candles");
+  assert.equal(rec.worstPrice, 90n * E18);
+  assert.equal(rec.bestPrice, 110n * E18);
+});
+
 test("with neither candles nor tape the trade is counted as without excursion", () => {
   const bars = [bar(0, null, null)];
   const list = extractTrades([trade({ t: 1_500, heldSec: 500 })], { bars, oneBase });
