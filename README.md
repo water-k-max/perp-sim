@@ -114,6 +114,8 @@ pnpm replay-account --account <PUBLIC_ADDRESS> --market BTC --days 3
 
 Read-only. Fetches the account's own fills, books them through the same `PositionBook` at their real prices and recorded fees, and diffs row by row against `PerpPositionChange` (`kind`, closed size, exit price, realized PnL) and `PerpFeeRecord`. Zero tolerance on fees, ±1 raw unit on entry averaging. It refuses anything that would need a signer.
 
+`PerpFeeRecord` rows are split by rail before any comparison, because the kinds do not mean the same thing: `Fee`/`Rebate`/`BuilderFee` are the cost of a fill and are compared against the fees recomputed from the fills; `LiquidationFee`/`LiquidationFeeSkipped` are penalties on forced closes routed to an Insurance Fund tier, reported on their own line and excluded from that comparison — an unrecognised kind fails the report closed instead of being guessed at. The report also labels whether the fill-fee leg carried any information: on Hideki the venue's taker and maker rates are both 0, so `0 == 0` is printed as `vacuous-zero-rate` and is not evidence that fee accounting was checked. Measured on a liquidated account (39 of the 40 newest liquidation rows sit on listed perp markets): `fills=15 changes=15 mismatches=0` with `expected=0 actual=0` on the trade rail and `824505007534266267961` raw on the liquidation rail.
+
 The position book itself matches the chain's semantics, proven against live rows: one volume-weighted average entry per position (truncating), partial closes realize against that average and leave it unchanged, and realized PnL divides rounding down. A live 20-fill BTC account reconciled **20/20 exactly**.
 
 ## Data layer
@@ -160,12 +162,12 @@ pnpm test:units && pnpm test:web && pnpm test:engine && pnpm test:data && pnpm t
 ## Limits
 
 - **No order-book replay.** The venue publishes historical trades, not depth, so queue position and book impact are not modelled. The result never claims otherwise: the `book-not-crossed` invariant skips with that reason rather than passing.
-- **No liquidation fill price or liquidation fee.** A maintenance breach ends the run at the adverse extreme and is labelled as a modelled breach, not a liquidation transaction.
+- **No liquidation fill price or liquidation fee.** A maintenance breach ends the run at the adverse extreme and is labelled as a modelled breach, not a liquidation transaction. Real liquidation penalties are on chain and are read — the reconcile reports them on their own rail — but the simulator does not charge one.
 - **Gas is a constant** (`--gas`), not a measured cost.
 - **Markouts are hourly only.** The 60-second candle series is not ingested, so 1 m and 5 m markouts are not reported.
 - **Fills are modelled, not executed.** A tape fill estimates what a small taker could have got; it is not a record of a real order. The forced end-of-run close is priced at the final settlement mark (the fills table marks it `tape prints: mark`) and the result says so in its warnings.
 - **One position at a time.** Cross-market margin, ADL, insurance funds, and multi-leg portfolios are out of scope, as are parameter sweeps and walk-forward. Monte Carlo trade-order resampling is implemented (`src/resample/`).
-- **Fees recorded on this testnet have been zero.** Nonzero taker/maker rates are implemented and unit-tested but have not been observed in a live charging pool.
+- **Fill fees are zero by venue policy, not by omission.** All 22 live Hideki perp markets report `taker=0 maker=0` bps×1k, so every simulated run's fee attribution is structurally zero and the reconcile's fill-fee leg cannot fail here — it now says so (`vacuous-zero-rate`). Non-zero rates are implemented and are exercised by a fixture with a forced non-zero rate, which catches a wrong fee record. The perp fee stream itself is not empty: it is dominated by non-zero `LiquidationFee` rows, which are penalties on forced closes and are reported separately.
 - Indexer/RPC availability, incomplete history and changing chain state affect results; a truncated read is surfaced rather than hidden.
 - The frontend is local-only. Public deployment and refreshed submission packaging remain separate release tasks.
 

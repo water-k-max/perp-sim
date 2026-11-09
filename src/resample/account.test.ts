@@ -11,7 +11,11 @@ const row = (closed: bigint, pnl: bigint) => ({
 const report = (pnls: bigint[]): ReconcileReport => ({
   account: "0xabc", pool: "0xp", market: "BTC", fromSec: 0, toSec: 1, fills: pnls.length + 1, changes: 0, unmatched: 0,
   rows: [row(0n, 0n), ...pnls.map((p) => row(1n, p))], mismatches: 0,
-  fees: { expected: 0n, actual: 0n, diff: 0n, rows: 0 }, ok: true, warnings: [],
+  fees: {
+    expected: 0n, actual: 0n, diff: 0n, rows: 0, leg: "vacuous-zero-rate",
+    rates: { takerBpsTimes1k: 0n, makerBpsTimes1k: 0n },
+    liquidation: { rows: 0, total: 0n }, unknown: { rows: 0, total: 0n, kinds: [] }, byKind: [],
+  }, ok: true, warnings: [],
 });
 const opts = { paths: 200, seed: "", start: 1_000_000_000n, quoteDecimals: 6 };
 

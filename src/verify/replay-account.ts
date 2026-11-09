@@ -37,6 +37,30 @@ export type RowReconcile = {
   diffs: string[];
 };
 
+/**
+ *  Which rail a recorded perp fee belongs to.
+ *
+ *  The chain writes one `PerpFee` row per charge and the kinds do not share a meaning: `Fee`,
+ *  `Rebate` and `BuilderFee` are the cost of a fill, while `LiquidationFee` is a penalty on a
+ *  forced close routed wholly to an Insurance Fund tier and `LiquidationFeeSkipped` records the
+ *  penalty the rate cap waived. Adding the second group to the first would make every liquidated
+ *  account read as an accounting failure, so the rails are compared separately and an
+ *  unrecognised kind fails the report closed rather than being silently assigned somewhere.
+ */
+export type FeeRail = "trade" | "liquidation" | "unknown";
+
+const TRADE_KINDS = new Set(["fee", "rebate", "builderfee"]);
+const LIQUIDATION_KINDS = new Set(["liquidationfee", "liquidationfeeskipped"]);
+
+export function feeRail(kind: string): FeeRail {
+  const key = kind.toLowerCase();
+  if (TRADE_KINDS.has(key)) return "trade";
+  if (LIQUIDATION_KINDS.has(key)) return "liquidation";
+  return "unknown";
+}
+
+export type FeeRailTotal = { rows: number; total: bigint };
+
 export type ReconcileReport = {
   account: string;
   pool: string;
@@ -49,7 +73,30 @@ export type ReconcileReport = {
   unmatched: number;
   rows: RowReconcile[];
   mismatches: number;
-  fees: { expected: bigint; actual: bigint; diff: bigint; rows: number };
+  fees: {
+    /** Fill fees recomputed from the fills at the market's live rates. */
+    expected: bigint;
+    /** Recorded trade-rail fees in the window, signed as a cost. */
+    actual: bigint;
+    diff: bigint;
+    /** Trade-rail rows in the window. */
+    rows: number;
+    /**
+     *  Whether `expected === actual` says anything. On a venue whose taker and maker rates are
+     *  both zero with no fill-fee rows, both sides are zero by construction and the comparison
+     *  cannot fail — `vacuous-zero-rate` is the label that keeps that pass from being read as
+     *  verified fee accounting.
+     */
+    leg: "informative" | "vacuous-zero-rate";
+    /** The market's live fee rates, in bps×1000, as the read reported them. */
+    rates: { takerBpsTimes1k: bigint; makerBpsTimes1k: bigint };
+    /** Liquidation penalties in the window: real, non-zero, and not a fill fee. */
+    liquidation: FeeRailTotal;
+    /** Rows whose kind belongs to no rail this check knows; their presence makes `ok` false. */
+    unknown: FeeRailTotal & { kinds: string[] };
+    /** Every kind seen in the window with its row count and signed total — the evidence behind the rails. */
+    byKind: { kind: string; rail: FeeRail; rows: number; total: bigint }[];
+  };
   ok: boolean;
   warnings: string[];
 };
@@ -145,16 +192,60 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
     const role = isTaker(fill, who) ? "taker" : "maker";
     return sum + fillFee(cfg, role, (BigInt(fill.quantity) * BigInt(fill.fillPrice)) / cfg.oneBase);
   }, 0n);
-  const actualFees = feesInWindow.reduce((sum, fee) => sum + signedFee(fee), 0n);
+  const byKind = new Map<string, { rail: FeeRail; rows: number; total: bigint }>();
+  const unknownKinds: string[] = [];
+  let tradeFees = 0n;
+  let tradeRows = 0;
+  let liquidationFees = 0n;
+  let liquidationRows = 0;
+  let unknownFees = 0n;
+  let unknownRows = 0;
+  for (const row of feesInWindow) {
+    const rail = feeRail(row.kind);
+    const amount = signedFee(row);
+    const seen = byKind.get(row.kind) ?? { rail, rows: 0, total: 0n };
+    seen.rows += 1;
+    seen.total += amount;
+    byKind.set(row.kind, seen);
+    if (rail === "trade") {
+      tradeFees += amount;
+      tradeRows += 1;
+    } else if (rail === "liquidation") {
+      liquidationFees += amount;
+      liquidationRows += 1;
+    } else {
+      unknownFees += amount;
+      unknownRows += 1;
+      if (!unknownKinds.includes(row.kind)) unknownKinds.push(row.kind);
+    }
+  }
+  const rates = { takerBpsTimes1k: feeBps(cfg, "taker"), makerBpsTimes1k: feeBps(cfg, "maker") };
+  const zeroRateVenue = rates.takerBpsTimes1k === 0n && rates.makerBpsTimes1k === 0n;
+  const feeLeg = zeroRateVenue && tradeRows === 0 && expectedFees === 0n ? "vacuous-zero-rate" : "informative";
 
   if (!seeded && fills.length > 0) warnings.push("no position update was returned for any fill; nothing could be seeded");
   if (unmatched > 0) warnings.push(`${unmatched} fills have no indexed position update and were skipped`);
   if (book.lots.length > 0) {
     warnings.push(`${book.lots.length} lot(s) still open at the end of the window; open positions have no realized check`);
   }
-  if (actualFees !== expectedFees) {
+  if (tradeFees !== expectedFees) {
     warnings.push(
-      `fee records total ${actualFees} against ${expectedFees} recomputed at the live ${feeBps(cfg, "taker")} bpsx1k taker rate; a rate change or a maker fill explains the difference`,
+      `recorded fill fees total ${tradeFees} against ${expectedFees} recomputed at the live ${rates.takerBpsTimes1k}/${rates.makerBpsTimes1k} bpsx1k taker/maker rates; a rate change or a maker fill explains the difference`,
+    );
+  }
+  if (feeLeg === "vacuous-zero-rate") {
+    warnings.push(
+      `the fill-fee comparison proved nothing: this market charges ${rates.takerBpsTimes1k} taker and ${rates.makerBpsTimes1k} maker bpsx1k, so both sides are zero by construction and this leg cannot fail. It is not evidence that fee accounting was checked.`,
+    );
+  }
+  if (liquidationRows > 0) {
+    warnings.push(
+      `${liquidationRows} liquidation-rail record(s) totalling ${liquidationFees} are excluded from the fill-fee comparison: a liquidation penalty is charged on a forced close and routed to an Insurance Fund tier, and this check does not model it.`,
+    );
+  }
+  if (unknownRows > 0) {
+    warnings.push(
+      `${unknownRows} fee record(s) of unrecognised kind(s) [${unknownKinds.join(", ")}] could not be attributed to a rail; the report fails closed`,
     );
   }
 
@@ -169,8 +260,18 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
     unmatched,
     rows,
     mismatches,
-    fees: { expected: expectedFees, actual: actualFees, diff: actualFees - expectedFees, rows: feesInWindow.length },
-    ok: mismatches === 0 && unmatched === 0 && actualFees === expectedFees,
+    fees: {
+      expected: expectedFees,
+      actual: tradeFees,
+      diff: tradeFees - expectedFees,
+      rows: tradeRows,
+      leg: feeLeg,
+      rates,
+      liquidation: { rows: liquidationRows, total: liquidationFees },
+      unknown: { rows: unknownRows, total: unknownFees, kinds: unknownKinds },
+      byKind: [...byKind.entries()].map(([kind, v]) => ({ kind, rail: v.rail, rows: v.rows, total: v.total })),
+    },
+    ok: mismatches === 0 && unmatched === 0 && tradeFees === expectedFees && unknownRows === 0,
     warnings,
   };
 }

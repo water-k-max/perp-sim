@@ -30,7 +30,19 @@ console.log(`account ${report.account}`);
 console.log(`window  ${utc(report.fromSec)} -> ${utc(report.toSec)}`);
 console.log(`read    ${report.fills} fills, ${report.changes} indexed position updates, ${report.unmatched} unmatched`);
 
-console.log(`\nfees  expected ${fromRaw(report.fees.expected, cfg.quoteDecimals)}  recorded ${fromRaw(report.fees.actual, cfg.quoteDecimals)}  diff ${fromRaw(report.fees.diff, cfg.quoteDecimals)}  (${report.fees.rows} rows)`);
+console.log(`\nfees  expected ${fromRaw(report.fees.expected, cfg.quoteDecimals)}  recorded ${fromRaw(report.fees.actual, cfg.quoteDecimals)}  diff ${fromRaw(report.fees.diff, cfg.quoteDecimals)}  (${report.fees.rows} fill-fee rows)`);
+console.log(`      ${report.fees.leg === "vacuous-zero-rate"
+  ? `VACUOUS: taker ${report.fees.rates.takerBpsTimes1k} / maker ${report.fees.rates.makerBpsTimes1k} bpsx1k — the venue charges no fill fee, so 0 == 0 here proves nothing`
+  : `informative at taker ${report.fees.rates.takerBpsTimes1k} / maker ${report.fees.rates.makerBpsTimes1k} bpsx1k`}`);
+if (report.fees.liquidation.rows > 0) {
+  console.log(`      liquidation rail: ${report.fees.liquidation.rows} record(s), ${fromRaw(report.fees.liquidation.total, cfg.quoteDecimals)} ${cfg.quoteSymbol} — excluded above, this check does not model it`);
+}
+if (report.fees.unknown.rows > 0) {
+  console.log(`      unrecognised kinds: ${report.fees.unknown.kinds.join(", ")} (${report.fees.unknown.rows} record(s)) — failing closed`);
+}
+if (report.fees.byKind.length > 0) {
+  console.log(`      by kind: ${report.fees.byKind.map((k) => `${k.kind}/${k.rail}=${k.rows}(${k.total})`).join(" ")}`);
+}
 
 const shown = report.rows.slice(0, 20);
 if (shown.length > 0) {

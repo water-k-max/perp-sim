@@ -104,6 +104,28 @@ Ranked by how much they change what you can claim out loud.
    `ok: true` today for the same reason — the fee path has never been exercised against a non-zero
    fee. Any claim about realistic cost modelling must be dropped until it runs somewhere fees exist
    (or against a fixture with a forced non-zero rate).
+   **Corrected by re-measurement, and fixed.** The `0 rows` reading was an artifact of filtering by
+   account+pool: unfiltered, `listPerpFees({limit:200})` returns 200 rows, **171 of them non-zero**,
+   spread over 19 of the 22 perp pools (`probe/perp-fee-rows.mts`) — and every one of them is a
+   `LiquidationFee` or `LiquidationFeeSkipped` record, not a fill fee. So the venue really does charge
+   nothing per fill, and the fee stream is not empty: the two facts were conflated. That made the gap
+   worse than "vacuous" — summing all rails against recomputed fill fees meant a liquidated account's
+   `actual` was a penalty total (measured `95284492030000000000` raw) against `expected=0`, so a
+   perfectly reconciling account could read `ok:false`. Fixed in `replay-account.ts`: `feeRail()`
+   classifies `Fee`/`Rebate`/`BuilderFee` as the trade rail (compared), `LiquidationFee`/
+   `LiquidationFeeSkipped` as their own rail (reported, never compared) and an unknown kind fails the
+   report closed; `fees.leg` labels `vacuous-zero-rate` when both rates are 0, no trade rows exist and
+   the recomputed total is 0, and prints the warning that says the pass proves nothing. Four new tests
+   in `replay-account.test.ts` cover the informative case (a doubled fee record now breaks `ok`), the
+   vacuous label, liquidation isolation and the fail-closed path; mutating either the rail set or the
+   label flips its test. Live evidence after the change: `probe/liquidation-reconcile.mts` over two
+   liquidated accounts — `fills=15 changes=15 mismatches=0`, `expected=0 actual=0` with
+   `leg=vacuous-zero-rate`, and `824505007534266267961` raw on the liquidation rail. 39 of the 40
+   newest liquidation rows sit on listed perp markets, so this is reachable data, not a corner.
+   **What is still not proved:** no live venue charges a fill fee, so the fill-fee arithmetic is only
+   ever exercised against a fixture. The SDK's own note that "no `LiquidationFee` rows exist yet" is
+   stale against the deployed Hideki indexer, and `LiquidationFeeSkipped` is not in its documented
+   kind list at all.
 4. **The edge-null verdict copy is wrong at one end.** The p-value is defined as the share of null
    totals **at or above** the recorded total, add-one corrected
    ([src/resample/edge.ts:120-121](../src/resample/edge.ts)), so its ceiling is not benign: an
@@ -220,17 +242,23 @@ surface around it by calling each method directly against both live endpoints:
 | `getUserFillsPage(acct,{marketType:'PERP',pool,since,until,limit:500,cursor})` | `:193` | OK — 500 rows, cursor present | OK — 14 rows, cursor null |
 | `listPerpPositionChangesForFills(acct,fills)` | `:73` | OK — **25/25** fills matched | OK — **25/25** matched |
 | `listPerpPositionChanges({account,pool,limit})` | — | OK — 20 rows | OK — 14 rows |
-| `listPerpFees({account,pool})` | `:79` | OK but **0 rows** | OK but **0 rows** |
+| `listPerpFees({account,pool})` | `:79` | OK — **0 rows**, and that filter is the reason A.3.3 read the stream as empty | OK — 14 rows of fills, 0 fee rows |
+| `listPerpFees({limit:200})` unfiltered | — | **200 rows, 171 non-zero**, all `LiquidationFee`/`LiquidationFeeSkipped`, over 19 pools | not re-run |
 | `listPerpOrderHistory(acct,{pool,limit})` | — | OK — 20 rows | OK — 4 rows |
 | `listPerpPositions(acct,{limit})` | — | OK — 16 open positions | OK — 1 |
 | `countUserFills(acct,{marketType:'PERP'})` | — | OK — 10,000 (cap) | OK — 14 |
 | `getTradeContext(fillId)` | — | OK — `fill, market, makerOrder, takerOrder, siblings, protocolFees, builderFees` | OK — same |
 | `getFundingPayments` / `getMarginEvents` | — | exist; take `(account, opts)` positionally (`somniaMarketsClient.d.ts:2508,2534`) — my object call was wrong, not the SDK | same |
 
-`getTradeContext` is the one worth building on: it returns the maker and taker *orders*, the sibling
-fills of the same order, and both fee legs in a single read. Since `listPerpFees` is empty on both
-endpoints, `getTradeContext(…)`.protocolFees/builderFees is the only working route to real cost data —
-which is precisely what a fee model needs before A.3.3 stops being a caveat.
+`getTradeContext` returns the maker and taker *orders* and the sibling fills of the same order, which
+makes it the right read for order-level forensics. It is **not** a route to perp cost data, and the
+paragraph I wrote here earlier claimed it was: measured over the four busiest perp pools
+(`probe/perp-fee-sources.mts`), `protocolFees` and `builderFees` came back **0 rows for every fill**,
+which is what the SDK type documents — "Protocol fees charged in the same transaction. BINARY only".
+The unfiltered `listProtocolFees` stream does have rows (25 newest, 11 distinct pools) but none of them
+sit on a perp pool and every `amount` is `0`; `listBuilderFees` and `listSettlementFees` are 0 rows.
+The perp cost rail that does exist is `listPerpFees`, and on this venue it carries liquidation
+penalties rather than fill fees — see the corrected A.3.3.
 
 ### B.3 dreamDEX's own REST API — measured, and it does not answer this question
 
@@ -278,9 +306,12 @@ Everything below is config plus one read path; none of it needs new runtime depe
    `getLatestFillBlock` are two reads and would tell the user up front: window empty, account is a bot
    (count == 10,000 cap → will be truncated at `maxFills 2_000`), or indexer has no perp data. All three
    conditions are live right now and all three currently surface only as a mid-run warning.
-4. **Use `getTradeContext` for the fee leg** and drop the `listPerpFees` comparison to a secondary check,
-   until a market with non-zero fees exists to compare against. This is what converts A.3.3 from an empty
-   pass into a real test.
+4. **~~Use `getTradeContext` for the fee leg~~ — superseded by measurement.** That read's fee arrays
+   are BINARY-only and came back empty for every perp fill (B.2), so it could not have converted
+   A.3.3. What was done instead: the perp fee rail is split by `kind` inside `reconcileAccount`
+   (`feeRail()`), fill fees are compared on their own, liquidation penalties are reported without
+   being compared, unknown kinds fail closed, and the vacuous case is labelled `vacuous-zero-rate`
+   with a warning that says the pass proved nothing.
 5. **Keep the loopback binding and the read-only posture.** Everything measured here is a public GET/POST
    to a documented indexer; no signer, no key, no transaction. Repointing the *read* endpoint does not
    change that. What it does change is claim scope: testnet prints are not customer trades, and per B.1
