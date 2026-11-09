@@ -1,4 +1,5 @@
 import type { RunResult } from "../engine/loop.js";
+import type { Bar } from "../history/bars.js";
 import type { ModeledFill } from "../strategy/types.js";
 import { bps, isqrt, sqrtScaled, toDecimal } from "./decimal.js";
 
@@ -146,8 +147,10 @@ export function computeMetrics(result: RunResult): Metrics {
  *  Markout: how a fill looks at a fixed horizon afterwards, in basis points of the fill
  *  price. Positive is favourable (price moved the way the position points).
  *
- *  `priceAt` must be a lookup over prices that existed at or before the requested second —
- *  the caller owns that, because using a bar that closes after the horizon is lookahead.
+ *  `priceAt` must be a published price for the requested second — the caller owns which
+ *  series it reads, and a fill whose horizon was never observed is skipped, not estimated.
+ *  Markouts are measured after the fact, so reading a mark published past the horizon is an
+ *  observation of the outcome, never an input to a decision.
  */
 export function markouts(
   fills: readonly ModeledFill[],
@@ -164,6 +167,31 @@ export function markouts(
     count += 1;
   }
   return count === 0 ? null : sum / BigInt(count);
+}
+
+/**
+ *  Price lookup over the settlement marks the account is itself marked against: the first
+ *  settlement at or after `t`, null once the series runs out.
+ *
+ *  Settlements are the venue's own cadence (hourly on Hideki), so a horizon measured against
+ *  them is always fully elapsed and always an oracle mark. A candle close is neither: it sits
+ *  a variable distance past the horizon and comes from a different price basis than the PnL
+ *  the markout is describing.
+ */
+export function settlementPriceAt(bars: readonly Bar[]): (t: number) => bigint | null {
+  return (t: number): bigint | null => {
+    let lo = 0;
+    let hi = bars.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (bars[mid]!.t >= t) {
+        best = mid;
+        hi = mid - 1;
+      } else lo = mid + 1;
+    }
+    return best === -1 ? null : bars[best]!.mark;
+  };
 }
 
 /** The metrics as decimal strings, ready to serialise. */

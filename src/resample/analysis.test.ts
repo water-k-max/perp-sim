@@ -75,9 +75,9 @@ test("default seed is a stable hash of the run id", () => {
   assert.notEqual(a, defaultResampleSeed("b".repeat(64)));
 });
 
-test("analysis is deterministic for identical inputs", () => {
-  const a = buildResampleAnalysis(inputs());
-  const b = buildResampleAnalysis(inputs());
+test("analysis is deterministic for identical inputs", async () => {
+  const a = await buildResampleAnalysis(inputs());
+  const b = await buildResampleAnalysis(inputs());
   assert.deepEqual(a, b);
   assert.equal(a.meta.seed, "analysis-fixture");
   assert.equal(a.distributions.length, 2);
@@ -88,28 +88,28 @@ test("analysis is deterministic for identical inputs", () => {
   assert.notEqual(a.oos, null);
 });
 
-test("default seed derives from the run id, and the block is identical either way", () => {
+test("default seed derives from the run id, and the block is identical either way", async () => {
   const base = inputs({ request: parseResampleRequest({ paths: 128 }) });
-  const derived = buildResampleAnalysis(base);
+  const derived = await buildResampleAnalysis(base);
   assert.equal(derived.meta.seed, defaultResampleSeed(base.runId));
-  const explicit = buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: defaultResampleSeed(base.runId), paths: 128 }) }));
+  const explicit = await buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: defaultResampleSeed(base.runId), paths: 128 }) }));
   assert.deepEqual(explicit, derived);
 });
 
-test("single mode emits one distribution; sizing and oos respect sizing request", () => {
-  const a = buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 64, mode: "bootstrap_with_replacement" }) }));
+test("single mode emits one distribution; sizing and oos respect sizing request", async () => {
+  const a = await buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 64, mode: "bootstrap_with_replacement" }) }));
   assert.equal(a.distributions.length, 1);
   assert.equal(a.distributions[0]!.mode, "bootstrap_with_replacement");
-  const noOos = buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 64, holdbackFraction: null }) }));
+  const noOos = await buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 64, holdbackFraction: null }) }));
   assert.equal(noOos.oos, null);
 });
 
-test("empty trade list yields an honest, non-crashing document", () => {
+test("empty trade list yields an honest, non-crashing document", async () => {
   const base = inputs();
   base.list.trades = [];
   base.list.sameBarCount = 0;
   base.list.withoutExcursionCount = 0;
-  const a = buildResampleAnalysis(base);
+  const a = await buildResampleAnalysis(base);
   assert.equal(a.input.tradeCount, 0);
   assert.equal(a.distributions.length, 0);
   assert.equal(a.sizing.rows.length, 0);
@@ -117,9 +117,20 @@ test("empty trade list yields an honest, non-crashing document", () => {
   assert.equal(a.audit.dismissed, false);
 });
 
-test("warnings carry the modelled-distribution honesty lines", () => {
-  const a = buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 100 }) }));
+test("warnings carry the modelled-distribution honesty lines", async () => {
+  const a = await buildResampleAnalysis(inputs({ request: parseResampleRequest({ seed: "s", paths: 100 }) }));
   assert.ok(a.warnings.some(w => /not a forecast/.test(w)));
   assert.ok(a.warnings.some(w => /paths is a small sample/.test(w)));
+});
+
+test("the paths × horizon work budget is pinned at 2,000,000 steps", () => {
+  // Exactly at the ceiling is legal; one step over is rejected before any simulation.
+  const at = parseResampleRequest({ paths: 20_000, horizonTrades: 100 });
+  assert.equal(at.paths * at.horizonTrades!, 2_000_000);
+  assert.throws(() => parseResampleRequest({ paths: 20_000, horizonTrades: 101 }), /work budget/);
+  assert.throws(() => parseResampleRequest({ paths: 2_000, horizonTrades: 1_001 }), /work budget/);
+  // A null horizon (use the trade count) is not capped at parse time; simulatePaths bounds it.
+  const nullHorizon = parseResampleRequest({ paths: 20_000 });
+  assert.equal(nullHorizon.horizonTrades, null);
 });
 

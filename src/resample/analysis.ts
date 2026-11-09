@@ -11,7 +11,7 @@
 import { sha256, canonical } from "../data/store.js";
 import { fromRaw, toRaw } from "../units.js";
 import { summarizePaths, type PathSummary } from "./stats.js";
-import { simulatePaths, type SizingMode } from "./path.js";
+import { assertWorkBudget, simulatePaths, type SizingMode } from "./path.js";
 import { isResampleMode, type ResampleMode } from "./sample.js";
 import { auditTradeList, assumptionLines, type RunAssumptions } from "./audit.js";
 import { simulateSizing } from "./sizing.js";
@@ -63,6 +63,9 @@ export function parseResampleRequest(value: unknown): ResampleRequest {
   if (horizonTrades !== null && (!Number.isInteger(horizonTrades) || horizonTrades < 1 || horizonTrades > 1_000_000)) {
     throw new Error("resample horizonTrades must be a positive whole number.");
   }
+  // Reject an over-budget explicit horizon before any snapshot is loaded; the null case
+  // (horizon = trade count) is bounded by assertWorkBudget inside simulatePaths.
+  if (horizonTrades !== null) assertWorkBudget(Number(paths), horizonTrades);
   const acceptedLoss = v.acceptedLoss ?? null;
   if (acceptedLoss !== null && (typeof acceptedLoss !== "string" || !/^\d{1,12}(\.\d{1,18})?$/.test(acceptedLoss) || Number(acceptedLoss) <= 0)) {
     throw new Error("resample acceptedLoss must be a positive decimal.");
@@ -103,7 +106,7 @@ export type DistributionBlock = {
 };
 
 export type ResampleAnalysis = {
-  version: 3;
+  version: 4;
   meta: {
     seed: string;
     paths: number;
@@ -223,7 +226,7 @@ export type AnalysisInputs = {
   edge?: { bars: readonly Bar[]; cfg: MarketConfig };
 };
 
-export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis {
+export async function buildResampleAnalysis(inputs: AnalysisInputs): Promise<ResampleAnalysis> {
   const { list, request } = inputs;
   const seed = request.seed === "" ? defaultResampleSeed(inputs.runId) : request.seed;
   const horizon = request.horizonTrades ?? Math.max(list.trades.length, 1);
@@ -234,8 +237,10 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
     ? ["shuffle_without_replacement", "bootstrap_with_replacement"]
     : [request.mode];
 
-  const distributions = modes.map((mode) => {
-    const paths = list.trades.length === 0 ? [] : simulatePaths({
+  const distributions: DistributionBlock[] = [];
+  for (const mode of modes) {
+    if (list.trades.length === 0) continue;
+    const paths = await simulatePaths({
       trades: list.trades.map((t) => ({ pnl: t.pnl })),
       mode,
       sizing: request.sizing,
@@ -244,13 +249,10 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
       start: inputs.start,
       seed,
     });
-    const summary = list.trades.length === 0
-      ? null
-      : summarizePaths(paths, inputs.quoteScale);
-    return summary === null ? null : distributionBlock(mode, summary, inputs.quoteDecimals);
-  }).filter((d): d is DistributionBlock => d !== null);
+    distributions.push(distributionBlock(mode, summarizePaths(paths, inputs.quoteScale), inputs.quoteDecimals));
+  }
 
-  const audit = auditTradeList(list, inputs.assumptions, {
+  const audit = await auditTradeList(list, inputs.assumptions, {
     paths: request.paths,
     horizon,
     sizing: request.sizing,
@@ -260,7 +262,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
     oneBase: inputs.oneBase,
   });
 
-  const sizing = list.trades.length === 0 ? null : simulateSizing({
+  const sizing = list.trades.length === 0 ? null : await simulateSizing({
     trades: list.trades,
     seed,
     paths: request.paths,
@@ -277,7 +279,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
     quoteScale: inputs.quoteScale,
   });
 
-  const oos = list.trades.length < 2 || request.holdbackFraction === null ? null : runOos({
+  const oos = list.trades.length < 2 || request.holdbackFraction === null ? null : await runOos({
     trades: list.trades,
     holdbackFraction: request.holdbackFraction,
     seed,
@@ -306,7 +308,7 @@ export function buildResampleAnalysis(inputs: AnalysisInputs): ResampleAnalysis 
   warnings.push(...(inputs.extraWarnings ?? []));
 
   return {
-    version: 3,
+    version: 4,
     meta: {
       seed,
       paths: request.paths,

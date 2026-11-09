@@ -79,7 +79,7 @@ test("the import flow resolves the market, rebuilds bars from market data and re
   assert.equal(outcome.market, "TEST");
   assert.equal(outcome.quoteSymbol, "USDso");
   assert.equal(outcome.tradeCount, 3);
-  assert.equal(outcome.resample.version, 3);
+  assert.equal(outcome.resample.version, 4);
   assert.equal(outcome.resample.meta.source.kind, "import");
   assert.equal(outcome.resample.distributions.length, 2); // default mode "both"
   assert.equal(outcome.resample.input.withoutExcursionCount, 1); // trade 3 lies beyond the last bar

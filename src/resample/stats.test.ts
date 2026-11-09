@@ -35,8 +35,8 @@ test("quantile interpolation is exact at the endpoints and monotone between them
   for (let i = 1; i < values.length; i += 1) assert.ok(values[i]! >= values[i - 1]!, `ladder fell at ${i}`);
 });
 
-test("summarizePaths returns an ordered percentile ladder and CVaR below VaR", () => {
-  const summary = summarizePaths(goldenPaths(), SCALE);
+test("summarizePaths returns an ordered percentile ladder and CVaR below VaR", async () => {
+  const summary = summarizePaths(await goldenPaths(), SCALE);
   const ladder = [
     summary.p05FinalEquity, summary.p10FinalEquity, summary.p25FinalEquity, summary.p50FinalEquity,
     summary.p75FinalEquity, summary.p90FinalEquity, summary.p95FinalEquity,
@@ -52,8 +52,8 @@ test("summarizePaths returns an ordered percentile ladder and CVaR below VaR", (
   assert.equal(summary.fan[0]!.p90, 100);
 });
 
-test("golden fixture: 10-trade list with a pinned seed reproduces exactly", () => {
-  const summary = summarizePaths(goldenPaths(), SCALE);
+test("golden fixture: 10-trade list with a pinned seed reproduces exactly", async () => {
+  const summary = summarizePaths(await goldenPaths(), SCALE);
   // Pinned outputs of the current implementation for the hand-written list above, seed
   // "golden-10-trade-fixture", 64 paths, horizon 37, static sizing, 100 start. If a
   // deliberate algorithm change makes these drift, update them in the same commit that
@@ -72,15 +72,15 @@ test("golden fixture: 10-trade list with a pinned seed reproduces exactly", () =
   assert.deepEqual(summary.fan[37], { step: 37, p10: 107.3, p25: 118, p50: 127.5, p75: 140, p90: 150.7 });
 });
 
-test("a path set with a ruinous trade reports a positive bankruptcy rate", () => {
+test("a path set with a ruinous trade reports a positive bankruptcy rate", async () => {
   const trades = [{ pnl: -200n * E18 }, { pnl: 1n * E18 }];
-  const paths = simulatePaths({ trades, mode: "bootstrap_with_replacement", sizing: "static", paths: 32, horizon: 8, start, seed: "ruin" });
+  const paths = await simulatePaths({ trades, mode: "bootstrap_with_replacement", sizing: "static", paths: 32, horizon: 8, start, seed: "ruin" });
   const summary = summarizePaths(paths, SCALE);
   assert.ok(summary.bankruptcyCount > 0);
   assert.equal(summary.bankruptcyRate, summary.bankruptcyCount / 32);
 });
 
-test("same seed re-run is identical end to end (pinned JSON)", () => {
-  const render = () => JSON.stringify(summarizePaths(goldenPaths(), SCALE), (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v));
-  assert.equal(render(), render());
+test("same seed re-run is identical end to end (pinned JSON)", async () => {
+  const render = async () => JSON.stringify(summarizePaths(await goldenPaths(), SCALE), (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v));
+  assert.equal(await render(), await render());
 });

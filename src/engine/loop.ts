@@ -399,7 +399,20 @@ export async function run(input: RunInput): Promise<RunResult> {
 
     if (!flat && equity < mmReq) {
       liquidatedAtBar = index;
-      liquidatedAtPrice = adverse ? worst : bar.mark;
+      const breachPrice = adverse && worst !== null ? worst : bar.mark;
+      liquidatedAtPrice = breachPrice;
+      // Model the breach as a reduce-only taker close at the breach price so ending equity
+      // is realised proceeds, not unrealised mark PnL. The market params expose no
+      // liquidation fee, so the taker fee stands in (disclosed by the shared API warning).
+      const req: OrderRequest = { side: book.size > 0n ? "sell" : "buy", size: abs(book.size), reduceOnly: true, tag: "liquidation" };
+      const outcome: OrderOutcome = {
+        id: `${strategy.id}-${++orderCounter}`, side: req.side, requested: req.size,
+        limit: null, reduceOnly: true, tag: "liquidation", decidedAt: bar.t, eligibleAt: bar.t,
+        status: "filled", filled: req.size, price: breachPrice, reason: null,
+      };
+      orders.push(outcome);
+      bookFill({ outcome, req, index, priceQuantity: 0n, refBar: bar }, breachPrice, req.size,
+        req.size * breachPrice / book.cfg.oneBase, bar.t, [], chainPosition(bar));
       done = true;
       return;
     }

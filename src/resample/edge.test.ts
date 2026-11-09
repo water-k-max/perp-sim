@@ -110,11 +110,15 @@ test("a recorded total no null can reach pins the p-value at the add-one floor",
   // a recorded total of 500 is unreachable, so zero nulls reach it: p = 1/301.
   const outcome = runEdgeTest(edgeInputs([trade({ pnl: 500n * Q6 })]))!;
   assert.equal(outcome.pValue, (1 / (EDGE_PATHS + 1)).toFixed(4));
+  assert.equal(outcome.nullsAtOrAbove, 0, "the tally under the add-one correction is published, not implied");
+  assert.ok(outcome.notes.some((n) => n.startsWith("Resolution:")), "the resolution limit is disclosed in the block");
 });
 
 test("a recorded total every null beats pins the p-value at one", () => {
   const outcome = runEdgeTest(edgeInputs([trade({ pnl: -500n * Q6 })]))!;
   assert.equal(outcome.pValue, "1.0000");
+  assert.equal(outcome.nullsAtOrAbove, EDGE_PATHS, "every null total sat at or above the record");
+  assert.ok(outcome.notes.some((n) => n.startsWith("Direction:")), "the ceiling is read as bad timing, not luck");
 });
 
 test("trades the history is too short to place are counted and contribute nothing", () => {
@@ -163,33 +167,33 @@ function analysisInputs(withEdge: boolean): AnalysisInputs {
   };
 }
 
-test("the analysis carries the edge block when history is supplied and skips it when not", () => {
-  const withEdge = buildResampleAnalysis(analysisInputs(true));
+test("the analysis carries the edge block when history is supplied and skips it when not", async () => {
+  const withEdge = await buildResampleAnalysis(analysisInputs(true));
   assert.equal(withEdge.edge === null, false);
   assert.equal(withEdge.edge!.paths, EDGE_PATHS);
   assert.equal(withEdge.edge!.realizedTotal, "2.0");
-  const withoutEdge = buildResampleAnalysis(analysisInputs(false));
+  const withoutEdge = await buildResampleAnalysis(analysisInputs(false));
   assert.equal(withoutEdge.edge, null);
 });
 
-test("the edge invariant passes on a real block, is skipped without one, and catches a tampered total", () => {
+test("the edge invariant passes on a real block, is skipped without one, and catches a tampered total", async () => {
   const inputs = analysisInputs(true);
-  const analysis = buildResampleAnalysis(inputs);
-  const invariants = checkResample(analysis, inputs);
+  const analysis = await buildResampleAnalysis(inputs);
+  const invariants = await checkResample(analysis, inputs);
   const edge = invariants.find((i) => i.id === "edge-realized-total")!;
   assert.equal(edge.status, "pass", invariants.map((i) => `${i.id}:${i.status}`).join(","));
 
-  const without = checkResample(buildResampleAnalysis(analysisInputs(false)), analysisInputs(false));
+  const without = await checkResample(await buildResampleAnalysis(analysisInputs(false)), analysisInputs(false));
   assert.equal(without.find((i) => i.id === "edge-realized-total")!.status, "skip");
 
   const tampered: ResampleAnalysis = { ...analysis, edge: { ...analysis.edge!, realizedTotal: "999" } };
-  const caught = checkResample(tampered, inputs).find((i) => i.id === "edge-realized-total")!;
+  const caught = (await checkResample(tampered, inputs)).find((i) => i.id === "edge-realized-total")!;
   assert.equal(caught.status, "fail");
 });
 
-test("the resample-deterministic invariant still holds with the edge block present", () => {
+test("the resample-deterministic invariant still holds with the edge block present", async () => {
   const inputs = analysisInputs(true);
-  const analysis = buildResampleAnalysis(inputs);
-  const invariants = checkResample(analysis, inputs);
+  const analysis = await buildResampleAnalysis(inputs);
+  const invariants = await checkResample(analysis, inputs);
   assert.ok(invariants.every((i) => i.status === "pass"), invariants.map((i) => `${i.id}:${i.status}`).join(","));
 });

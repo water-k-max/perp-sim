@@ -34,7 +34,7 @@ export function accountTrades(report: ReconcileReport): { pnl: bigint }[] {
   return report.rows.filter((r) => r.actual.closedSize > 0n).map((r) => ({ pnl: r.actual.realizedPnl }));
 }
 
-export function resampleAccount(report: ReconcileReport, opts: AccountResampleOptions): AccountResample {
+export async function resampleAccount(report: ReconcileReport, opts: AccountResampleOptions): Promise<AccountResample> {
   const trades = accountTrades(report);
   const scale = 10n ** BigInt(opts.quoteDecimals);
   const seed = opts.seed === "" ? sha256(`account-resample/${report.account.toLowerCase()}/${report.market}/${report.fromSec}/${report.toSec}`) : opts.seed;
@@ -45,10 +45,15 @@ export function resampleAccount(report: ReconcileReport, opts: AccountResampleOp
   ];
   if (trades.length < 30) warnings.push(`Only ${trades.length} closed trades: percentiles over so few observations are wide and unstable.`);
   const wins = trades.filter((t) => t.pnl > 0n).length;
-  const distributions = trades.length === 0 ? [] : (["shuffle_without_replacement", "bootstrap_with_replacement", "block_bootstrap_with_replacement"] as const).map((mode) =>
-    distributionBlock(mode, summarizePaths(simulatePaths({
-      trades, mode, sizing: opts.sizing ?? "static", paths: opts.paths, horizon: trades.length, start: opts.start, seed,
-    }), scale), opts.quoteDecimals));
+  const distributions: DistributionBlock[] = [];
+  if (trades.length > 0) {
+    for (const mode of ["shuffle_without_replacement", "bootstrap_with_replacement", "block_bootstrap_with_replacement"] as const) {
+      const paths = await simulatePaths({
+        trades, mode, sizing: opts.sizing ?? "static", paths: opts.paths, horizon: trades.length, start: opts.start, seed,
+      });
+      distributions.push(distributionBlock(mode, summarizePaths(paths, scale), opts.quoteDecimals));
+    }
+  }
   const total = trades.reduce((s, t) => s + t.pnl, 0n);
   const neg = total < 0n;
   const abs = neg ? -total : total;

@@ -78,7 +78,7 @@ function dec(value: bigint, quoteScale: bigint): number {
   return Number(value) / Number(quoteScale);
 }
 
-export function simulateSizing(opts: SizingOptions): SizingResult {
+export async function simulateSizing(opts: SizingOptions): Promise<SizingResult> {
   if (opts.acceptedLossQuote <= 0n) throw new Error("accepted loss must be positive");
   if (!Number.isInteger(opts.horizonTrades) || opts.horizonTrades < 1) throw new Error("horizonTrades must be a positive integer");
   if (opts.trades.length === 0) throw new Error("cannot size an empty trade list");
@@ -92,7 +92,7 @@ export function simulateSizing(opts: SizingOptions): SizingResult {
 
   for (const size of ladder) {
     const scaled: PathTrade[] = opts.trades.map((t) => ({ pnl: (t.pnl * size) / t.size }));
-    const paths = simulatePaths({
+    const paths = await simulatePaths({
       trades: scaled,
       mode: opts.mode,
       sizing: opts.sizing,

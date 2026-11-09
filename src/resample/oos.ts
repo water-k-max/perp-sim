@@ -60,12 +60,12 @@ export function splitHoldback(trades: readonly TradeRecord[], fraction: number):
   return { fit: trades.slice(0, fitCount), held: trades.slice(fitCount) };
 }
 
-export function runOos(opts: OosOptions): OosResult {
+export async function runOos(opts: OosOptions): Promise<OosResult> {
   const { fit, held } = splitHoldback(opts.trades, opts.holdbackFraction);
   const horizon = opts.horizon ?? fit.length;
 
   // Fit half: bootstrap with replacement, static sizing — design doc step 2.
-  const fitPaths = simulatePaths({
+  const fitPaths = await simulatePaths({
     trades: fit.map((t) => ({ pnl: t.pnl })),
     mode: "bootstrap_with_replacement",
     sizing: "static",

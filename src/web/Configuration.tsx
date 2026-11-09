@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { decimal, record, type Market, type RequestDTO } from './dto.js';
+import { decimal, fetchMarkets, type Market, type RequestDTO } from './dto.js';
 
 const PROFILE_HELP = { optimistic: '5 s window · 100% of volume', realistic: '30 s window · 25% of volume', conservative: '120 s window · 5% of volume' };
 type Fields = {
@@ -10,30 +10,39 @@ type Fields = {
   resampleMode: 'both' | 'shuffle_without_replacement' | 'bootstrap_with_replacement';
   resampleSizing: 'static' | 'compound';
 };
-export function Configuration({ busy, error, onError, onRun, onRetry, mobile, open, hasResults, onEdit, onShowResults }: {
+export type { Fields as ConfigFields };
+
+/**
+ *  The inputs that actually feed the request for the form as it stands: only the window
+ *  control the mode uses, and only the resample options when resampling is on. Anything
+ *  here that moves after a run makes the results on screen answer a setup that is gone.
+ */
+export function watchFields(fields: Fields): Partial<Record<keyof Fields, string>> {
+  const window = fields.windowMode === 'custom' ? { from: 'Start date', to: 'End date' } : { days: 'Lookback' };
+  const strategy = fields.strategy === 'sma' ? { fast: 'Fast SMA', slow: 'Slow SMA' } : {};
+  const resample = fields.resample ? { resampleSeed: 'Resample seed', resamplePaths: 'Resample paths', resampleMode: 'Resample mode', resampleSizing: 'Resample sizing' } : {};
+  return { market: 'Market', side: 'Side', size: 'Size', cash: 'Starting cash', intrabar: 'Intra-bar path', fillModel: 'Fill model', profile: 'Fill profile', latency: 'Latency', gas: 'Gas per order', strategy: 'Strategy', ...window, ...strategy, resample: 'Resampling', ...resample };
+}
+export function Configuration({ busy, error, onRun, onRetry, onDraft, mobile, open, hasResults, onEdit, onShowResults }: {
   mobile: boolean; open: boolean; hasResults: boolean; onEdit: () => void; onShowResults: () => void;
-  busy: boolean; error: string | null; onError: (message: string) => void; onRun: (body: RequestDTO) => void; onRetry: () => void;
+  busy: boolean; error: string | null; onRun: (body: RequestDTO, fields: Fields) => void; onRetry: () => void;
+  onDraft: (fields: Fields) => void;
 }) {
   const [fields, setFields] = useState<Fields>({ market: 'BTC', side: 'long', size: '0.01', cash: '1000', windowMode: 'days', days: '14', from: '', to: '', intrabar: true, fillModel: 'tape', profile: 'realistic', latency: '1', gas: '0', strategy: 'fixed', fast: '6', slow: '24', resample: false, resampleSeed: '', resamplePaths: '1000', resampleMode: 'both', resampleSizing: 'static' });
   const [markets, setMarkets] = useState<Market[]>([]);
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const dateRefs = useRef<Partial<Record<'from' | 'to', HTMLInputElement | null>>>({});
   const sizeTouched = useRef(false);
   const decimals = useRef<Partial<Record<'size' | 'cash' | 'gas', HTMLInputElement | null>>>({});
   const set = <K extends keyof Fields>(key: K, value: Fields[K]) => setFields(old => ({ ...old, [key]: value }));
   const applyMarket = (old: Fields, market: Market | undefined, symbol: string): Fields => ({ ...old, market: symbol, size: market && (!sizeTouched.current || !decimal.test(old.size.trim()) || Number(old.size.trim()) < Number(market.minQuantity)) ? market.minQuantity : old.size });
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const response = await fetch('/api/markets', { headers: { Accept: 'application/json' } });
-        if (!response.ok) return;
-        const list: unknown = await response.json();
-        if (!Array.isArray(list) || !list.length || !list.every((m: unknown) => record(m) && typeof m.symbol === 'string' && typeof m.quoteSymbol === 'string' && typeof m.lot === 'string' && typeof m.minQuantity === 'string')) return;
-        if (cancelled) return;
-        const next = list as Market[];
-        setMarkets(next);
-        setFields(old => { const market = next.find(m => m.symbol === old.market) ?? next[0]; return applyMarket(old, market, market.symbol); });
-      } catch { /* Static choices remain available offline. */ }
-    })();
+    fetchMarkets().then(next => {
+      if (cancelled) return;
+      setMarkets(next);
+      setFields(old => { const market = next.find(m => m.symbol === old.market) ?? next[0]; return applyMarket(old, market, market.symbol); });
+    }).catch(() => { /* Static choices remain available offline. */ });
     return () => { cancelled = true; };
   }, []);
   const decimalInput = (key: 'size' | 'cash' | 'gas') => ({
@@ -44,6 +53,8 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
     },
   });
   const market = markets.find(m => m.symbol === fields.market);
+  // The parent needs the live form to tell an edited setup from a matching one.
+  useEffect(() => { onDraft(fields); }, [fields, onDraft]);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
@@ -58,7 +69,14 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
       strategy: fields.strategy === 'sma' ? { id: 'sma', params: { fast: Number(fields.fast), slow: Number(fields.slow), side: 'both' } } : { id: 'fixed', params: { side: fields.side, atBar: 1 } },
     };
     if (fields.windowMode === 'custom') {
-      if (!fields.from || !fields.to) { onError('Choose both a start and an end date.'); return; }
+      if (!fields.from || !fields.to || fields.from >= fields.to) {
+        setRangeError(!fields.from || !fields.to ? 'Choose both a start and an end date.' : 'The end date must be after the start date.');
+        const first = !fields.from ? dateRefs.current.from : !fields.to ? dateRefs.current.to : dateRefs.current.from;
+        first?.focus();
+        first?.scrollIntoView({ block: 'center' });
+        return;
+      }
+      setRangeError(null);
       body.from = fields.from; body.to = fields.to;
     } else body.days = Number(fields.days);
     if (fields.resample) {
@@ -72,7 +90,7 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
         holdbackFraction: 0.3,
       };
     }
-    onRun(body);
+    onRun(body, fields);
   }
   return <section className="panel configuration" aria-labelledby="config-title">
     <div className="panel-heading"><h3 id="config-title" tabIndex={-1}>Position setup</h3><span className="pill">PERPETUALS</span></div>
@@ -87,11 +105,12 @@ export function Configuration({ busy, error, onError, onRun, onRetry, mobile, op
         <fieldset className="direction"><legend>Direction</legend><div className="segmented"><label><input type="radio" name="side" value="long" checked={fields.side === 'long'} onChange={() => set('side', 'long')} /><span>↗ Long</span></label><label><input type="radio" name="side" value="short" checked={fields.side === 'short'} onChange={() => set('side', 'short')} /><span>↘ Short</span></label></div></fieldset>
         <label htmlFor="size">Position size <span id="size-unit">{fields.market}</span></label><input id="size" name="size" type="text" inputMode="decimal" pattern="[0-9]+([.][0-9]+)?" {...decimalInput('size')} required aria-describedby="size-help" /><small id="size-help" className="field-help">{market ? `Lots of ${market.lot} ${fields.market} · minimum ${market.minQuantity} ${fields.market}. Base quantity, not leverage.` : 'Base asset quantity, not leverage.'}</small>
         <label htmlFor="cash">Starting cash <span>Quote currency</span></label><input id="cash" name="cash" type="text" inputMode="decimal" pattern="[0-9]+([.][0-9]+)?" {...decimalInput('cash')} required />
-        <label htmlFor="window-mode">Window <span>UTC</span></label><select id="window-mode" name="windowMode" value={fields.windowMode} onChange={e => set('windowMode', e.target.value as Fields['windowMode'])}><option value="days">Lookback in days</option><option value="custom">Custom dates</option></select>
+        <label htmlFor="window-mode">Window <span>UTC</span></label><select id="window-mode" name="windowMode" value={fields.windowMode} onChange={e => { set('windowMode', e.target.value as Fields['windowMode']); setRangeError(null); }}><option value="days">Lookback in days</option><option value="custom">Custom dates</option></select>
         <label htmlFor="days" id="days-label" hidden={fields.windowMode === 'custom'}>Lookback window <span>1–90 days</span></label><div className="input-suffix" id="days-row" hidden={fields.windowMode === 'custom'}><input id="days" name="days" type="number" min="1" max="90" step="1" value={fields.days} onChange={e => set('days', e.target.value)} required /><span>days</span></div>
         <div id="custom-range" hidden={fields.windowMode !== 'custom'}>
-          <label htmlFor="from">From <span>00:00 UTC</span></label><input id="from" name="from" type="date" value={fields.from} onChange={e => set('from', e.target.value)} />
-          <label htmlFor="to">To <span>00:00 UTC, exclusive</span></label><input id="to" name="to" type="date" value={fields.to} onChange={e => set('to', e.target.value)} />
+          <label htmlFor="from">From <span>00:00 UTC</span></label><input id="from" name="from" type="date" ref={el => { dateRefs.current.from = el; }} value={fields.from} onChange={e => { set('from', e.target.value); setRangeError(null); }} aria-invalid={rangeError !== null} aria-describedby="range-error" />
+          <label htmlFor="to">To <span>00:00 UTC, exclusive</span></label><input id="to" name="to" type="date" ref={el => { dateRefs.current.to = el; }} value={fields.to} onChange={e => { set('to', e.target.value); setRangeError(null); }} aria-invalid={rangeError !== null} aria-describedby="range-error" />
+          <p id="range-error" className="field-error" role="alert" hidden={rangeError === null}>{rangeError}</p>
         </div>
         <label className="checkbox"><input id="intrabar" name="intrabar" type="checkbox" checked={fields.intrabar} onChange={e => set('intrabar', e.target.checked)} /><span>Include intrabar checks<small>Use hourly candle extremes for maintenance checks.</small></span></label>
       </fieldset>

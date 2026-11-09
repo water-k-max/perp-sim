@@ -30,43 +30,43 @@ test("sizeLadder is lot-aligned, capped, and includes the run's own size", () =>
   assert.deepEqual(sizeLadder(oneBase, 0n, []), []);
 });
 
-test("loss probabilities stay in [0, 1] and the table stops at even-money odds", () => {
+test("loss probabilities stay in [0, 1] and the table stops at even-money odds", async () => {
   const mixed = [trade(5n * E18), trade(-4n * E18), trade(3n * E18), trade(-2n * E18)];
-  const result = simulateSizing({ ...baseOpts, trades: mixed });
+  const result = await simulateSizing({ ...baseOpts, trades: mixed });
   assert.ok(result.rows.length > 0);
   for (const row of result.rows) {
     assert.ok(row.lossProbability >= 0 && row.lossProbability <= 0.5, `lossProbability ${row.lossProbability} out of bounds`);
   }
   // All-losing trades deeper than the accepted loss: every size is past even money.
   const losing = [trade(-50n * E18), trade(-60n * E18)];
-  const busted = simulateSizing({ ...baseOpts, trades: losing });
+  const busted = await simulateSizing({ ...baseOpts, trades: losing });
   assert.equal(busted.rows.length, 0);
 });
 
-test("loss probability is non-decreasing across the ladder", () => {
+test("loss probability is non-decreasing across the ladder", async () => {
   const mixed = [trade(8n * E18), trade(-9n * E18), trade(2n * E18), trade(-6n * E18), trade(1n * E18)];
-  const result = simulateSizing({ ...baseOpts, trades: mixed });
+  const result = await simulateSizing({ ...baseOpts, trades: mixed });
   for (let i = 1; i < result.rows.length; i += 1) {
     assert.ok(result.rows[i]!.lossProbability >= result.rows[i - 1]!.lossProbability);
   }
 });
 
-test("sizing output is deterministic under the seed", () => {
+test("sizing output is deterministic under the seed", async () => {
   const mixed = [trade(5n * E18), trade(-4n * E18), trade(3n * E18)];
-  const a = simulateSizing({ ...baseOpts, trades: mixed });
-  const b = simulateSizing({ ...baseOpts, trades: mixed });
+  const a = await simulateSizing({ ...baseOpts, trades: mixed });
+  const b = await simulateSizing({ ...baseOpts, trades: mixed });
   assert.deepEqual(a, b);
 });
 
-test("a row beyond the IMF leverage bound produces a sanity note", () => {
+test("a row beyond the IMF leverage bound produces a sanity note", async () => {
   // markPrice 100, start 100 quote: 1 base = 100 notional = 1x. IMF 5% permits 20x;
   // the 32x-lot (32 base) and 64x-lot rows exceed it, so a note names them.
-  const result = simulateSizing({ ...baseOpts, trades: [trade(1n * E18)] });
+  const result = await simulateSizing({ ...baseOpts, trades: [trade(1n * E18)] });
   assert.ok(result.note !== null, "expected a leverage sanity note");
   assert.ok(result.note!.includes("initial-margin"));
 });
 
-test("sizing rejects a non-positive accepted loss and an empty trade list", () => {
-  assert.throws(() => simulateSizing({ ...baseOpts, trades: [trade(1n * E18)], acceptedLossQuote: 0n }), /positive/);
-  assert.throws(() => simulateSizing({ ...baseOpts, trades: [] }), /empty/);
+test("sizing rejects a non-positive accepted loss and an empty trade list", async () => {
+  await assert.rejects(simulateSizing({ ...baseOpts, trades: [trade(1n * E18)], acceptedLossQuote: 0n }), /positive/);
+  await assert.rejects(simulateSizing({ ...baseOpts, trades: [] }), /empty/);
 });

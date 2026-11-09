@@ -9,12 +9,12 @@ import { ParameterTimeline } from "./data/params.js";
 import { loadMarketData } from "./data/ingest.js";
 import type { MarketData } from "./data/types.js";
 import { createTapeSource, createFrozenTapeSource, type TapeSource } from "./data/tape.js";
-import { readSnapshot, writeSnapshot, sha256 } from "./data/store.js";
+import { readSnapshot, writeSnapshot, sha256, CacheCorruptionError } from "./data/store.js";
 import { loadRun, saveRun } from "./runs/store.js";
 import { fixedPosition } from "./strategy/fixed.js";
 import { smaCross } from "./strategy/sma.js";
 import type { Strategy } from "./strategy/types.js";
-import { computeMetrics, markouts, metricsView, type Metrics } from "./analytics/metrics.js";
+import { computeMetrics, markouts, metricsView, settlementPriceAt, type Metrics } from "./analytics/metrics.js";
 import { attribute, attributionView, type Attribution } from "./analytics/attribution.js";
 import { checkRun, checkResample, type Invariant } from "./verify/invariants.js";
 import { buildResampleAnalysis, parseResampleRequest, type AnalysisInputs, type ResampleAnalysis, type ResampleRequest } from "./resample/analysis.js";
@@ -22,6 +22,9 @@ import { extractTrades, type TradeList } from "./resample/inputs.js";
 import type { TapeFill } from "./data/types.js";
 import { buildManifest, codeIsLoaded, getCodeIdentity, type RunManifest } from "./runs/manifest.js";
 import { fromRaw, toRaw } from "./units.js";
+
+/** Shared by both API paths so the liquidation disclosure cannot drift between them. */
+const LIQUIDATION_WARNING = "Modeled maintenance breach: the position is closed at the breach price (the adverse intrabar extreme, else the settlement mark) and charged the taker fee. The market params expose no liquidation fee or liquidator fill price, so actual liquidation proceeds may differ.";
 
 const loadedCode = await getCodeIdentity();
 async function assertLoadedCode(): Promise<void> {
@@ -45,6 +48,15 @@ export function parseRequest(value: unknown): Request {
 }
 
 export class BacktestInputError extends Error {}
+export class BacktestStorageError extends Error {}
+
+/** IO and corruption failures are service faults, not user input errors; keep the raw detail for the client's technical drawer. */
+function storageFault(error: unknown): BacktestStorageError | null {
+  if (error instanceof CacheCorruptionError || (error as NodeJS.ErrnoException)?.code) {
+    return new BacktestStorageError(error instanceof Error ? error.message : String(error));
+  }
+  return null;
+}
 
 /**
  *  The model request: the legacy fields plus everything the professional replay adds. A
@@ -74,7 +86,8 @@ export function parseRunRequest(value: unknown): ParsedRun {
 
   const legacy = parseRequest({ ...v, days: v.days ?? 14 });
   const now = Math.floor(Date.now() / 1000);
-  const to = v.to === undefined || v.to === null ? now : asSeconds(v.to, "to");
+  // A defaulted end lands on the last completed hour, so identical lookbacks share one cache entry.
+  const to = v.to === undefined || v.to === null ? now - (now % 3600) : asSeconds(v.to, "to");
   const from = v.from === undefined || v.from === null ? to - Number(v.days ?? 14) * 86_400 : asSeconds(v.from, "from");
   if (from >= to) throw new Error("The window must end after it starts.");
   if (to - from > MAX_WINDOW_SEC) throw new Error("The window is limited to 90 days.");
@@ -188,11 +201,17 @@ export async function runReplay(input: RunRequest): Promise<Replay> {
   try {
     data = await loadMarketData(client, cfg, { fromSec: input.from!, toSec: input.to! });
   } catch (error) {
-    throw new BacktestInputError(error instanceof Error ? error.message : "History could not be loaded for that window.");
+    throw storageFault(error) ?? new BacktestInputError(error instanceof Error ? error.message : "History could not be loaded for that window.");
   }
   const tape = input.fillModel === "tape" ? createTapeSource(client, cfg.pool, data.manifest.range) : undefined;
   const replay = await replayPrepared(input, cfg, data, tape);
-  await persistReplay(replay, input);
+  try {
+    await persistReplay(replay, input);
+  } catch (error) {
+    const fault = storageFault(error);
+    if (fault) throw fault;
+    throw error;
+  }
   return replay;
 }
 
@@ -256,7 +275,7 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
     attribution: attribute(result),
     invariants: checkRun(result, { coverage: cov }),
     manifest,
-    priceAt: candlePriceAt(data.candles3600, 3600),
+    priceAt: settlementPriceAt(bars),
     requested,
     size,
     cash,
@@ -266,8 +285,8 @@ export async function replayPrepared(input: RunRequest, cfg: MarketConfig, data:
   };
   if (input.resample) {
     const analysisInputs = resampleInputs(replay, input.resample, manifest, input.intrabar);
-    const analysis = buildResampleAnalysis(analysisInputs);
-    replay.resample = { analysis, invariants: checkResample(analysis, analysisInputs) };
+    const analysis = await buildResampleAnalysis(analysisInputs);
+    replay.resample = { analysis, invariants: await checkResample(analysis, analysisInputs) };
   }
 
   await assertLoadedCode();
@@ -341,8 +360,8 @@ export async function replaySavedRun(runId: string) {
   const rebuilt: Replay = { ...replay, manifest: saved.manifest };
   if (snapshot.input.resample) {
     const analysisInputs = resampleInputs(rebuilt, snapshot.input.resample, saved.manifest, snapshot.input.intrabar);
-    const analysis = buildResampleAnalysis(analysisInputs);
-    rebuilt.resample = { analysis, invariants: checkResample(analysis, analysisInputs) };
+    const analysis = await buildResampleAnalysis(analysisInputs);
+    rebuilt.resample = { analysis, invariants: await checkResample(analysis, analysisInputs) };
   }
   const response = modelResponse(rebuilt, snapshot.input);
   if (sha256(response) !== sha256(saved.result)) throw new Error("Frozen replay did not reproduce the recorded report.");
@@ -384,7 +403,7 @@ function modelResponse(replay: Replay, input: RunRequest) {
   if (result.model.fillModel === "tape" && result.fills.some((f) => f.consumedFillIds.length === 0)) {
     warnings.push("The end-of-run close is priced at the final settlement mark, not matched against the tape.");
   }
-  if (result.status === "liquidated") warnings.push("Modeled maintenance breach; no liquidation fill price or liquidation fee is applied.");
+  if (result.status === "liquidated") warnings.push(LIQUIDATION_WARNING);
 
   return {
     market: cfg.symbol,
@@ -493,33 +512,6 @@ function buildStrategy(input: RunRequest, size: bigint): Strategy {
   return fixedPosition({ side, size, atBar: Number.isInteger(atBar) && atBar >= 1 ? atBar : 1 });
 }
 
-/**
- *  Price as of `t`, approximated by the close of the candle that contains `t`.
- *
- *  Markouts are measured after the fact, so the containing bar's close (which lands within
- *  one interval of `t`) is the closest published price — it is never used to make a trading
- *  decision, and requiring a fully elapsed bar would blank the first hour of every run.
- *  Past the last bar the horizon is unobservable and returns null rather than a stale price.
- */
-function candlePriceAt(candles: readonly { bucketStart: string; closePrice: string }[], intervalSec: number) {
-  return (t: number): bigint | null => {
-    let lo = 0;
-    let hi = candles.length - 1;
-    let best = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (Number(candles[mid]!.bucketStart) <= t) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
-    if (best < 0) return null;
-    const bucketStart = Number(candles[best]!.bucketStart);
-    if (t >= bucketStart + 2 * intervalSec) return null;
-    return BigInt(candles[best]!.closePrice);
-  };
-}
-
 export async function runBacktest(input: Request) {
   const client = createClient().client;
   const rows = await listPerps(client);
@@ -551,7 +543,7 @@ export async function runBacktest(input: Request) {
   if (size < cfg.minQuantity || size > cfg.maxPositionSize) warnings.push("This hypothetical size is outside the market's placement limits.");
   if (!found.complete || cov.missingSettlements || cov.gaps || cov.anchorResynced) warnings.push("History has gaps, resyncs or incomplete pagination. Interpret results with caution.");
   if (candleCoverage && (!candleCoverage.complete || candleCoverage.covered < candleCoverage.bars)) warnings.push("Candle coverage is incomplete; not every interval has an intrabar path.");
-  if (out.status === "liquidated") warnings.push("Modeled maintenance breach; this is not an actual liquidation. Ending equity uses the settlement mark, not liquidation proceeds.");
+  if (out.status === "liquidated") warnings.push(LIQUIDATION_WARNING);
   const money = (n: bigint) => fromRaw(n, cfg.quoteDecimals);
   let peak = cash;
   let drawdownBps = 0n;

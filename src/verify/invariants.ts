@@ -42,7 +42,7 @@ export function checkRun(run: RunResult, extras: { coverage?: Coverage } = {}): 
   );
 
   const signed = run.fills.reduce((sum, f) => sum + (f.side === "buy" ? f.size : -f.size), 0n);
-  const finalSize = run.status === "closed" ? 0n : (run.trail[run.trail.length - 1]?.size ?? 0n);
+  const finalSize = run.status === "closed" || run.status === "liquidated" ? 0n : (run.trail[run.trail.length - 1]?.size ?? 0n);
   verdict(
     "quantity-identity",
     signed === finalSize,
@@ -66,7 +66,7 @@ export function checkRun(run: RunResult, extras: { coverage?: Coverage } = {}): 
   for (const order of run.orders) {
     if (order.status === "rejected") continue;
     if (order.price === null) continue;
-    const terminal = order.tag === "terminal-close" && order.reduceOnly;
+    const terminal = (order.tag === "terminal-close" || order.tag === "liquidation") && order.reduceOnly;
     const earliest = terminal || run.model.fillModel === "settlement-mark" ? order.decidedAt : order.decidedAt + run.model.latencySec;
     if (order.eligibleAt < earliest) {
       lookahead = `order ${order.id} could trade at ${order.eligibleAt}, before ${earliest}`;
@@ -83,7 +83,7 @@ export function checkRun(run: RunResult, extras: { coverage?: Coverage } = {}): 
     if (fill.t === order.decidedAt && order.decidedBlock !== undefined && fill.block !== undefined) {
       const decisionLog = order.decidedLogIndex ?? Number.MAX_SAFE_INTEGER;
       const fillLog = fill.logIndex ?? Number.MAX_SAFE_INTEGER;
-      const terminal = order.tag === "terminal-close" && order.reduceOnly;
+      const terminal = (order.tag === "terminal-close" || order.tag === "liquidation") && order.reduceOnly;
       if (fill.block < order.decidedBlock || (fill.block === order.decidedBlock &&
         (fillLog < decisionLog || (!terminal && fillLog === decisionLog)))) {
         lookahead = `fill ${fill.id} at ${fill.block}:${fillLog} is not after decision ${order.decidedBlock}:${decisionLog}`;
@@ -91,7 +91,7 @@ export function checkRun(run: RunResult, extras: { coverage?: Coverage } = {}): 
       }
     }
   }
-  verdict("no-lookahead", lookahead === null, "error", lookahead ?? "actual fills respect decision, eligibility and run end (terminal closes exempt from latency)");
+  verdict("no-lookahead", lookahead === null, "error", lookahead ?? "actual fills respect decision, eligibility and run end (terminal and liquidation closes exempt from latency)");
 
   verdict(
     "determinism",
@@ -125,12 +125,20 @@ export function checkRun(run: RunResult, extras: { coverage?: Coverage } = {}): 
           : "equity stayed non-negative on every marked bar",
   });
 
-  out.push({
-    id: "liquidation-fill-modelled",
-    status: "skip",
-    severity: "warn",
-    detail: "a liquidation ends the run at the adverse extreme; no liquidation fill price exists in the tape",
-  });
+  if (run.liquidatedAtBar === null) {
+    out.push({ id: "liquidation-fill-modelled", status: "skip", severity: "warn", detail: "no maintenance breach in this run" });
+  } else {
+    const liq = run.fills.find((f) => f.tag === "liquidation");
+    const modelled = liq !== undefined && liq.price === run.liquidatedAtPrice && run.fundingOpen === 0n;
+    verdict(
+      "liquidation-fill-modelled",
+      modelled,
+      "warn",
+      modelled
+        ? `breach at bar ${run.liquidatedAtBar} closed at the breach price with the taker fee; the run ends flat`
+        : "a liquidated run must book a reduce-only close at the breach price and end flat",
+    );
+  }
   out.push({
     id: "book-not-crossed",
     status: "skip",
@@ -151,13 +159,13 @@ export function invariantsOk(list: readonly Invariant[]): boolean {
  *  bounds and no-lookahead checks are structural on the artifact itself, so a tampered
  *  document fails even in isolation.
  */
-export function checkResample(analysis: ResampleAnalysis, inputs: AnalysisInputs): Invariant[] {
+export async function checkResample(analysis: ResampleAnalysis, inputs: AnalysisInputs): Promise<Invariant[]> {
   const out: Invariant[] = [];
   const verdict = (id: string, ok: boolean, severity: InvariantSeverity, detail: string): void => {
     out.push({ id, status: ok ? "pass" : "fail", severity, detail });
   };
 
-  const rerun = buildResampleAnalysis(inputs);
+  const rerun = await buildResampleAnalysis(inputs);
   const recorded = sha256(analysis);
   const rebuilt = sha256(rerun);
   verdict(
@@ -217,14 +225,19 @@ export function checkResample(analysis: ResampleAnalysis, inputs: AnalysisInputs
     const expected = fromRaw(inputs.list.trades.reduce((sum, t) => sum + t.pnl, 0n), inputs.quoteDecimals);
     const p = Number(analysis.edge.pValue);
     const ordered = Number(analysis.edge.nullP05) <= Number(analysis.edge.nullMedian) && Number(analysis.edge.nullMedian) <= Number(analysis.edge.nullP95);
-    const ok = analysis.edge.realizedTotal === expected && p >= 0 && p <= 1 && ordered && analysis.edge.paths > 0;
+    // The p-value is a count, so it must be recomputable from that count: an off-by-one in the
+    // tally or in the add-one correction fails here rather than quietly shifting every verdict.
+    const count = analysis.edge.nullsAtOrAbove;
+    const recomputed = Number(((count + 1) / (analysis.edge.paths + 1)).toFixed(4));
+    const tallied = Number.isInteger(count) && count >= 0 && count <= analysis.edge.paths && recomputed === Number(p.toFixed(4));
+    const ok = analysis.edge.realizedTotal === expected && p >= 0 && p <= 1 && ordered && analysis.edge.paths > 0 && tallied;
     verdict(
       "edge-realized-total",
       ok,
       "error",
       ok
-        ? `edge null over ${analysis.edge.paths} paths compares the recorded total ${analysis.edge.realizedTotal} exactly; p-value ${analysis.edge.pValue} within [0, 1]`
-        : `edge block inconsistent: realized total ${analysis.edge.realizedTotal} vs recorded ${expected}, p-value ${analysis.edge.pValue}, ladder ordered ${ordered}`,
+        ? `edge null over ${analysis.edge.paths} paths compares the recorded total ${analysis.edge.realizedTotal} exactly; p-value ${analysis.edge.pValue} recomputes from ${count}/${analysis.edge.paths} nulls at or above it`
+        : `edge block inconsistent: realized total ${analysis.edge.realizedTotal} vs recorded ${expected}, p-value ${analysis.edge.pValue}, ladder ordered ${ordered}, tally ${count}/${analysis.edge.paths} -> ${recomputed}`,
     );
   }
 

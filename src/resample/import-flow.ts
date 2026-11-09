@@ -47,7 +47,7 @@ export async function runImportFlow(parsed: ParsedImport, deps: ImportFlowDeps):
       historyWarning = "The market history for the trade window could not be loaded; the trades carry no excursion data and the sizing leverage note has no mark price.";
     }
   }
-  const outcome = resampleImportedTrades(parsed, { cfg, bars, historyWarning });
+  const outcome = await resampleImportedTrades(parsed, { cfg, bars, historyWarning });
   return {
     runId: outcome.importId,
     market: cfg.symbol,

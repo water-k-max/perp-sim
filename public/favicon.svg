@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="NOVA">
+  <defs>
+    <linearGradient id="n" x1="0" y1="32" x2="32" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6bdfe7" />
+      <stop offset="1" stop-color="#99b7ff" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#090e1c" />
+  <path d="M6 24h20" stroke="#3a4a68" stroke-width="2" />
+  <path d="M7 21l6-7 4 4 8-11" fill="none" stroke="url(#n)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

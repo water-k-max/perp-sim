@@ -51,13 +51,13 @@ test("re-pricing leaves everything else untouched", () => {
   assert.deepEqual(trades.map((t) => t.pnl), cases.map((t) => t.pnl));
 });
 
-test("the dismissal verdict fires at and only at the threshold share", () => {
+test("the dismissal verdict fires at and only at the threshold share", async () => {
   const config = { fillModel: "settlement-mark" as const, profile: null, latencySec: 1, gasPerTx: "0", intrabar: true };
   const opts = { paths: 16, horizon: 8, sizing: "static" as const, start: 100n * E18, seed: "audit", quoteScale: E18, oneBase };
   const atThreshold = listOf([rec({ sameBar: true }), rec({})]);
-  assert.equal(auditTradeList(atThreshold, config, { ...opts, dismissalThresholdBps: 5_000 }).dismissed, true);
-  assert.equal(auditTradeList(atThreshold, config, { ...opts, dismissalThresholdBps: 5_001 }).dismissed, false);
-  assert.equal(auditTradeList(listOf([]), config, opts).dismissed, false);
+  assert.equal((await auditTradeList(atThreshold, config, { ...opts, dismissalThresholdBps: 5_000 })).dismissed, true);
+  assert.equal((await auditTradeList(atThreshold, config, { ...opts, dismissalThresholdBps: 5_001 })).dismissed, false);
+  assert.equal((await auditTradeList(listOf([]), config, opts)).dismissed, false);
 });
 
 test("assumption lines name each quiet flatterer and its live consequence", () => {
@@ -72,7 +72,7 @@ test("assumption lines name each quiet flatterer and its live consequence", () =
   assert.equal(settlement.some((l) => l.includes("latency is 0")), false);
 });
 
-test("the audit re-run is deterministic and reprices only the adverse same-bar trades", () => {
+test("the audit re-run is deterministic and reprices only the adverse same-bar trades", async () => {
   const config = { fillModel: "settlement-mark" as const, profile: "realistic", latencySec: 1, gasPerTx: "0", intrabar: true };
   const opts = { paths: 32, horizon: 20, sizing: "static" as const, start: 100n * E18, seed: "audit-det", quoteScale: E18, oneBase };
   const list = listOf([
@@ -80,8 +80,8 @@ test("the audit re-run is deterministic and reprices only the adverse same-bar t
     rec({ pnl: 2n * E18 }),
     rec({ pnl: -1n * E18 }),
   ]);
-  const a = auditTradeList(list, config, opts);
-  const b = auditTradeList(list, config, opts);
+  const a = await auditTradeList(list, config, opts);
+  const b = await auditTradeList(list, config, opts);
   assert.deepEqual(a, b);
   assert.equal(a.repricedCount, 1);
   assert.ok(a.repricedSummary!.medianFinalEquity < a.exportedSummary!.medianFinalEquity);
@@ -89,14 +89,14 @@ test("the audit re-run is deterministic and reprices only the adverse same-bar t
   assert.ok(a.notes.some((n) => n.includes("not a bound") && n.includes("stop and target")));
 });
 
-test("tape fills: same-bar share is context only, with no verdict and no re-pricing", () => {
+test("tape fills: same-bar share is context only, with no verdict and no re-pricing", async () => {
   const config = { fillModel: "tape" as const, profile: "realistic", latencySec: 1, gasPerTx: "0", intrabar: true };
   const opts = { paths: 32, horizon: 20, sizing: "static" as const, start: 100n * E18, seed: "audit-tape", quoteScale: E18, oneBase, dismissalThresholdBps: 1 };
   const list = listOf([
     rec({ sameBar: true, barsHeld: 0, pnl: 3n * E18, mae: -5n * E18, mfe: 1n * E18, worstPrice: 95n * E18, bestPrice: 101n * E18, excursionSource: "tape" }),
     rec({ pnl: 2n * E18 }),
   ]);
-  const a = auditTradeList(list, config, opts);
+  const a = await auditTradeList(list, config, opts);
   assert.equal(a.fillBasis, "observed");
   assert.equal(a.dismissed, false);
   assert.equal(a.repricedCount, 0);

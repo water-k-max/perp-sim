@@ -292,12 +292,12 @@ export type ImportFlowOptions = {
  *  import id hashes the sorted list with its market and starting cash, so the same import
  *  with the default seed reproduces byte-identical output.
  */
-export function resampleImportedTrades(parsed: ParsedImport, opts: ImportFlowOptions): {
+export async function resampleImportedTrades(parsed: ParsedImport, opts: ImportFlowOptions): Promise<{
   analysis: ResampleAnalysis;
   invariants: Invariant[];
   importId: string;
   quoteSymbol: string;
-} {
+}> {
   const { cfg } = opts;
   const list = buildImportedTradeList(parsed.trades, cfg, opts.bars);
   const runId = sha256(canonical([
@@ -340,7 +340,7 @@ export function resampleImportedTrades(parsed: ParsedImport, opts: ImportFlowOpt
     // analysis carries no edge block rather than one priced on no data.
     edge: opts.bars.length > 0 ? { bars: opts.bars, cfg } : undefined,
   };
-  const analysis = buildResampleAnalysis(inputs);
-  const invariants = checkResample(analysis, inputs);
+  const analysis = await buildResampleAnalysis(inputs);
+  const invariants = await checkResample(analysis, inputs);
   return { analysis, invariants, importId: runId, quoteSymbol: cfg.quoteSymbol };
 }

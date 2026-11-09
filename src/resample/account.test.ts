@@ -18,21 +18,21 @@ const opts = { paths: 200, seed: "", start: 1_000_000_000n, quoteDecimals: 6 };
 test("opening fills are excluded from the trade list", () => {
   assert.equal(accountTrades(report([5n, -3n])).length, 2);
 });
-test("same account and window give identical output", () => {
+test("same account and window give identical output", async () => {
   const r = report([5_000_000n, -2_000_000n, 3_000_000n, -1_000_000n]);
-  assert.deepEqual(resampleAccount(r, opts), resampleAccount(r, opts));
+  assert.deepEqual(await resampleAccount(r, opts), await resampleAccount(r, opts));
 });
-test("empty account yields no distributions and a warning", () => {
-  const out = resampleAccount(report([]), opts);
+test("empty account yields no distributions and a warning", async () => {
+  const out = await resampleAccount(report([]), opts);
   assert.equal(out.distributions.length, 0);
   assert.ok(out.warnings.some((w) => w.includes("Only 0")));
 });
-test("shuffle preserves the realized total on every path", () => {
-  const out = resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
+test("shuffle preserves the realized total on every path", async () => {
+  const out = await resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
   assert.equal(out.realizedTotal, "6.000000");
 });
-test("distributions carry fan bands one step per trade", () => {
-  const out = resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
+test("distributions carry fan bands one step per trade", async () => {
+  const out = await resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
   for (const dist of out.distributions) {
     assert.equal(dist.fan.length, 4);
     assert.equal(dist.fan[0]!.step, 0);

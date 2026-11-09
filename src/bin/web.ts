@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { BacktestInputError, listMarkets, parseRunRequest, runRequest } from "../backtest-api.js";
+import { BacktestInputError, BacktestStorageError, listMarkets, parseRunRequest, runRequest } from "../backtest-api.js";
 import { createClient } from "../client.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { loadMarketData } from "../data/ingest.js";
@@ -25,6 +25,7 @@ try {
 }
 const assets: Record<string, [string, string]> = {
   "/": ["index.html", "text/html; charset=utf-8"],
+  "/favicon.svg": ["favicon.svg", "image/svg+xml"],
   "/app.css": ["app.css", "text/css; charset=utf-8"],
   "/app.js": ["../dist/web/app.js", "text/javascript; charset=utf-8"],
   "/nova-storyboard.png": ["nova-storyboard.png", "image/png"],
@@ -57,6 +58,11 @@ createServer(async (req, res) => {
         json(res, 200, result);
       } catch (error) {
         if (error instanceof BacktestInputError) { json(res, 400, { error: error.message }); return; }
+        if (error instanceof BacktestStorageError) {
+          console.error("Storage fault:", error.message);
+          json(res, 503, { error: "Local cache storage is unavailable. Check disk space and permissions, then retry.", detail: error.message });
+          return;
+        }
         console.error("Replay failed:", error instanceof Error ? error.message : "Unknown error");
         json(res, 422, { error: "Data service unavailable. Retry." });
       }
@@ -69,20 +75,25 @@ createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/resample") {
     if (!originAllowed(req, port, publicOrigin)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
     if (!req.headers["content-type"]?.startsWith("application/json")) { json(res, 415, { error: "Send JSON configuration." }); return; }
-    let body: unknown;
-    try { body = await readJson(req, 8192); }
-    catch (error) {
-      json(res, error instanceof BodyTooLarge ? 413 : 400, { error: error instanceof BodyTooLarge ? "Configuration is too large." : "Could not read request." });
-      return;
-    }
-    const runId = body && typeof body === "object" ? (body as Record<string, unknown>).runId : undefined;
-    if (typeof runId !== "string" || !/^[a-f0-9]{64}$/.test(runId)) { json(res, 400, { error: "A full run digest is required." }); return; }
+    if (!flight.tryAcquire()) { json(res, 429, { error: "A replay is already running. Please wait and try again." }); return; }
     try {
-      const outcome = await resampleStoredRun(runId, (body as Record<string, unknown>).resample);
-      json(res, 200, { runId, resample: { ...outcome.analysis, invariants: outcome.invariants } });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Resampling failed.";
-      json(res, /No saved run/.test(message) ? 404 : 400, { error: message });
+      let body: unknown;
+      try { body = await readJson(req, 8192); }
+      catch (error) {
+        json(res, error instanceof BodyTooLarge ? 413 : 400, { error: error instanceof BodyTooLarge ? "Configuration is too large." : "Could not read request." });
+        return;
+      }
+      const runId = body && typeof body === "object" ? (body as Record<string, unknown>).runId : undefined;
+      if (typeof runId !== "string" || !/^[a-f0-9]{64}$/.test(runId)) { json(res, 400, { error: "A full run digest is required." }); return; }
+      try {
+        const outcome = await resampleStoredRun(runId, (body as Record<string, unknown>).resample);
+        json(res, 200, { runId, resample: { ...outcome.analysis, invariants: outcome.invariants } });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Resampling failed.";
+        json(res, /No saved run/.test(message) ? 404 : 400, { error: message });
+      }
+    } finally {
+      flight.release();
     }
     return;
   }
@@ -183,7 +194,7 @@ createServer(async (req, res) => {
       const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 14)));
       const to = Math.floor(Date.now() / 1000);
       const report = await reconcileAccount({ client, cfg: market, account, fromSec: to - days * 86_400, toSec: to });
-      json(res, 200, resampleAccount(report, { paths, seed: url.searchParams.get("seed") ?? "", start: toRaw(url.searchParams.get("cash") ?? "1000", market.quoteDecimals), quoteDecimals: market.quoteDecimals }));
+      json(res, 200, await resampleAccount(report, { paths, seed: url.searchParams.get("seed") ?? "", start: toRaw(url.searchParams.get("cash") ?? "1000", market.quoteDecimals), quoteDecimals: market.quoteDecimals }));
     } catch (error) {
       console.error("Account resample failed:", error instanceof Error ? error.message : "Unknown error");
       json(res, 422, { error: "Account resample failed." });

@@ -49,6 +49,17 @@ export function linePath(points: readonly { x: number; y: number }[]): string {
   return points.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
 }
 
+/**
+ * Evenly spaced axis ticks spanning the inclusive [low, high] bounds, so the first and last
+ * tick label the axis min and max. The count is clamped to 3–5; a degenerate or non-finite
+ * range collapses to a single tick at `low` rather than dividing by zero.
+ */
+export function axisTicks(low: number, high: number, target = 5): number[] {
+  if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) return [low];
+  const count = Math.max(3, Math.min(5, Math.round(target)));
+  return Array.from({ length: count }, (_, i) => low + (high - low) * i / (count - 1));
+}
+
 /** Even-width histogram bins over a numeric sample; returned counts are exact. */
 export function histogram(values: readonly number[], bins: number): { from: number; to: number; count: number }[] {
   if (values.length === 0) return [];

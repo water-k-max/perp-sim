@@ -30,9 +30,9 @@ test("splitHoldback takes the tail and validates the fraction", () => {
   assert.equal(splitHoldback(trades, 0.99).fit.length, 1);
 });
 
-test("the boundary is the 95th percentile: about 5% of fit paths cross it", () => {
+test("the boundary is the 95th percentile: about 5% of fit paths cross it", async () => {
   const trades = Array.from({ length: 20 }, (_, i) => rec(BigInt(((i * 37) % 11) - 5) * E18));
-  const result = runOos({ ...baseOpts, trades, holdbackFraction: 0.25 });
+  const result = await runOos({ ...baseOpts, trades, holdbackFraction: 0.25 });
   const crossings = result.fitFinals.filter((f) => Number(f) / Number(E18) > result.boundary).length;
   const share = crossings / result.fitFinals.length;
   assert.ok(share <= 0.05, `${share} of fit paths crossed the p95 boundary`);
@@ -40,10 +40,10 @@ test("the boundary is the 95th percentile: about 5% of fit paths cross it", () =
   assert.equal(result.fitFinals.length, 400);
 });
 
-test("a held-back replay stronger than the fit half crosses the boundary", () => {
+test("a held-back replay stronger than the fit half crosses the boundary", async () => {
   const fit = Array.from({ length: 16 }, (_, i) => rec(BigInt(((i * 13) % 7) - 3) * E18));
-  const quiet = runOos({ ...baseOpts, trades: [...fit, rec(1n * E18), rec(1n * E18), rec(1n * E18), rec(1n * E18)], holdbackFraction: 0.2 });
-  const loud = runOos({ ...baseOpts, trades: [...fit, rec(80n * E18), rec(80n * E18), rec(80n * E18), rec(80n * E18)], holdbackFraction: 0.2 });
+  const quiet = await runOos({ ...baseOpts, trades: [...fit, rec(1n * E18), rec(1n * E18), rec(1n * E18), rec(1n * E18)], holdbackFraction: 0.2 });
+  const loud = await runOos({ ...baseOpts, trades: [...fit, rec(80n * E18), rec(80n * E18), rec(80n * E18), rec(80n * E18)], holdbackFraction: 0.2 });
   assert.equal(quiet.crossed, false);
   assert.equal(loud.crossed, true);
   assert.equal(loud.heldFinalMinusStart, 320n * E18);
@@ -52,22 +52,22 @@ test("a held-back replay stronger than the fit half crosses the boundary", () =>
   assert.equal(Number(loud.heldCurve[4]) / Number(E18), 420);
 });
 
-test("no look-ahead: held trades cannot move the boundary", () => {
+test("no look-ahead: held trades cannot move the boundary", async () => {
   const fit = Array.from({ length: 12 }, (_, i) => rec(BigInt(((i * 7) % 9) - 4) * E18));
   const heldQuiet = [rec(2n * E18), rec(-1n * E18), rec(3n * E18)];
   const heldLoud = [rec(900n * E18), rec(-800n * E18), rec(700n * E18)];
-  const a = runOos({ ...baseOpts, trades: [...fit, ...heldQuiet], holdbackFraction: 0.2 });
-  const b = runOos({ ...baseOpts, trades: [...fit, ...heldLoud], holdbackFraction: 0.2 });
+  const a = await runOos({ ...baseOpts, trades: [...fit, ...heldQuiet], holdbackFraction: 0.2 });
+  const b = await runOos({ ...baseOpts, trades: [...fit, ...heldLoud], holdbackFraction: 0.2 });
   assert.equal(a.boundary, b.boundary);
   assert.deepEqual(a.fitFinals, b.fitFinals);
   // The seq records partition the trade list for the invariant check.
   assert.deepEqual([...a.fitSeqs, ...a.heldSeqs].sort((x, y) => x - y), [...fit, ...heldQuiet].map((t) => t.seq).sort((x, y) => x - y));
 });
 
-test("oos output is deterministic under the seed and carries the verdict framing", () => {
+test("oos output is deterministic under the seed and carries the verdict framing", async () => {
   const trades = Array.from({ length: 14 }, (_, i) => rec(BigInt(((i * 11) % 8) - 4) * E18));
-  const a = runOos({ ...baseOpts, trades, holdbackFraction: 0.3 });
-  const b = runOos({ ...baseOpts, trades, holdbackFraction: 0.3 });
+  const a = await runOos({ ...baseOpts, trades, holdbackFraction: 0.3 });
+  const b = await runOos({ ...baseOpts, trades, holdbackFraction: 0.3 });
   assert.deepEqual(a, b);
   assert.ok(a.notes.some((n) => n.includes("not proof of an edge")));
   assert.ok(a.notes.some((n) => n.includes("inherit its biases")));

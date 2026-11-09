@@ -85,7 +85,7 @@ All money is exact bigint internally and decimal strings at the API edge.
 - `totalReturnBps`, `maxDrawdownBps`, `turnoverBps` from marked equity.
 - `sharpe` and `sortino` annualised from per-settlement returns, `null` under three bars or zero variance.
 - `winRateBps`, `avgTrade`, `expectancy`, `avgHoldSec`, best/worst trade from closed trades.
-- `markout1hBps`: favourable-after-fill price movement in basis points, using the hourly candle that contains `fill.t + 1 h`. Only the 1-hour horizon is published.
+- `markout1hBps`: favourable-after-fill price movement in basis points, measured at the first settlement mark at or after `fill.t + 1 h`. Fills whose horizon has no settlement inside the window are skipped, so a run whose last hour holds every fill reports `null`. Only the 1-hour horizon is published.
 - `attribution`: `Δequity = price − funding − fees − gas`, each signed, with an exact `residual`.
 
 ## Invariants

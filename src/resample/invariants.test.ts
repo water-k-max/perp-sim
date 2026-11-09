@@ -29,7 +29,7 @@ function rec(seq: number, pnl: bigint): TradeRecord {
   };
 }
 
-function fixture(): { analysis: ResampleAnalysis; inputs: AnalysisInputs } {
+async function fixture(): Promise<{ analysis: ResampleAnalysis; inputs: AnalysisInputs }> {
   const inputs: AnalysisInputs = {
     runId: "c".repeat(64),
     list: { trades: Array.from({ length: 16 }, (_, i) => rec(i + 1, BigInt(((i * 7) % 9) - 4) * E18 / 10n)), sameBarCount: 0, withoutExcursionCount: 0, window: { from: 1, to: 2 } },
@@ -47,16 +47,16 @@ function fixture(): { analysis: ResampleAnalysis; inputs: AnalysisInputs } {
     market: "ETH-USDso",
     assumptions: { fillModel: "tape", profile: "realistic", latencySec: 1, gasPerTx: "0", intrabar: true },
   };
-  return { analysis: buildResampleAnalysis(inputs), inputs };
+  return { analysis: await buildResampleAnalysis(inputs), inputs };
 }
 
-function statuses(list: ReturnType<typeof checkResample>): Record<string, string> {
+function statuses(list: Awaited<ReturnType<typeof checkResample>>): Record<string, string> {
   return Object.fromEntries(list.map((i) => [i.id, i.status]));
 }
 
-test("a fresh analysis passes the resample invariants; the edge null is skipped without history", () => {
-  const { analysis, inputs } = fixture();
-  const list = checkResample(analysis, inputs);
+test("a fresh analysis passes the resample invariants; the edge null is skipped without history", async () => {
+  const { analysis, inputs } = await fixture();
+  const list = await checkResample(analysis, inputs);
   assert.deepEqual(statuses(list), {
     "resample-deterministic": "pass",
     "resample-bounds": "pass",
@@ -65,51 +65,51 @@ test("a fresh analysis passes the resample invariants; the edge null is skipped 
   });
 });
 
-test("tampering with a final equity breaks resample-deterministic", () => {
-  const { analysis, inputs } = fixture();
+test("tampering with a final equity breaks resample-deterministic", async () => {
+  const { analysis, inputs } = await fixture();
   analysis.distributions[0]!.finalEquities[0] = "999999";
-  const list = checkResample(analysis, inputs);
+  const list = await checkResample(analysis, inputs);
   assert.equal(statuses(list)["resample-deterministic"], "fail");
   assert.match(list.find((i) => i.id === "resample-deterministic")!.detail, /diverged/);
 });
 
-test("moving a held seq into the fit half breaks oos-no-lookahead", () => {
-  const { analysis, inputs } = fixture();
+test("moving a held seq into the fit half breaks oos-no-lookahead", async () => {
+  const { analysis, inputs } = await fixture();
   const held = analysis.oos!.heldSeqs[0]!;
   analysis.oos!.fitSeqs.push(held);
-  const list = checkResample(analysis, inputs);
+  const list = await checkResample(analysis, inputs);
   assert.equal(statuses(list)["oos-no-lookahead"], "fail");
 });
 
-test("a CVaR above p05 breaks resample-bounds", () => {
-  const { analysis, inputs } = fixture();
+test("a CVaR above p05 breaks resample-bounds", async () => {
+  const { analysis, inputs } = await fixture();
   const dist = analysis.distributions[0]!;
   dist.cvar95 = String(Number(dist.p05) + 1);
-  const list = checkResample(analysis, inputs);
+  const list = await checkResample(analysis, inputs);
   assert.equal(statuses(list)["resample-bounds"], "fail");
   assert.match(list.find((i) => i.id === "resample-bounds")!.detail, /cvar95/);
 });
 
-test("an inverted sizing ladder breaks resample-bounds", () => {
-  const { analysis, inputs } = fixture();
+test("an inverted sizing ladder breaks resample-bounds", async () => {
+  const { analysis, inputs } = await fixture();
   const rows = analysis.sizing.rows;
   if (rows.length >= 2) {
     [rows[0]!.sizeBase, rows[1]!.sizeBase] = [rows[1]!.sizeBase, rows[0]!.sizeBase];
-    const list = checkResample(analysis, inputs);
+    const list = await checkResample(analysis, inputs);
     assert.equal(statuses(list)["resample-bounds"], "fail");
   } else {
     analysis.sizing.rows = [{ sizeBase: "5", lossProbability: "0.000", medianPnl: "0", p05Pnl: "0" }, { sizeBase: "1", lossProbability: "0.000", medianPnl: "0", p05Pnl: "0" }];
-    const list = checkResample(analysis, inputs);
+    const list = await checkResample(analysis, inputs);
     assert.equal(statuses(list)["resample-bounds"], "fail");
   }
 });
 
-test("a document without an oos block skips, never fails, the lookahead check", () => {
-  const { inputs } = fixture();
+test("a document without an oos block skips, never fails, the lookahead check", async () => {
+  const { inputs } = await fixture();
   inputs.request = parseResampleRequest({ seed: "invariant-fixture", paths: 96, holdbackFraction: null });
-  const analysis = buildResampleAnalysis(inputs);
+  const analysis = await buildResampleAnalysis(inputs);
   assert.equal(analysis.oos, null);
-  const list = checkResample(analysis, inputs);
+  const list = await checkResample(analysis, inputs);
   assert.equal(statuses(list)["oos-no-lookahead"], "skip");
 });
 

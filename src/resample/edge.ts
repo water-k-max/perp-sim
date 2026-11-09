@@ -12,7 +12,9 @@
  *  The p-value is the share of null totals at or above the recorded total, with the add-one
  *  correction so it can never report an impossible zero. It is one-sided: a small p-value
  *  says entries beat random timing on this history — evidence worth investigating, not
- *  proof of skill.
+ *  proof of skill. Its ceiling carries the opposite reading: p = 1.0000 means no random-entry
+ *  path did worse than the record, which is evidence of systematically bad timing. The ladder
+ *  that turns either end into words lives in `verdict.ts`, where its extremes are tested.
  */
 
 import { perpPositionAnalytics } from "@somnia-chain/markets-sdk";
@@ -47,6 +49,8 @@ export type EdgeBlock = {
   nullMean: string;
   /** Share of null totals at or above the recorded total, add-one corrected, in [0, 1]. */
   pValue: string;
+  /** Null totals at or above the recorded total, before the add-one correction. */
+  nullsAtOrAbove: number;
   /** Trades no null path could place because the history is shorter than the holding time. */
   skippedTrades: number;
   notes: string[];
@@ -126,6 +130,12 @@ export function runEdgeTest(inputs: EdgeInputs): EdgeBlock | null {
     "The p-value is the share of null totals at or above the recorded total, add-one corrected. It is one-sided: small means entries beat random timing on this history, which is a reason to look closer, not proof of skill.",
   ];
   if (skipped > 0) notes.push(`${skipped} null trade(s) could not be placed: the market history is shorter than the holding time, so they contribute nothing to the null totals.`);
+  notes.push(
+    `Resolution: ${atOrAbove} of ${EDGE_PATHS} null totals reached the recorded one, so p is a count over ${EDGE_PATHS} paths — it can never report below ${(1 / (EDGE_PATHS + 1)).toFixed(4)} (the add-one floor) and moves in steps of about ${(1 / (EDGE_PATHS + 1)).toFixed(4)}. Use it as a screen; a number quoted to four places is finer than this test can actually resolve.`,
+  );
+  notes.push(
+    "Direction: p has a ceiling as well as a floor. p = 1.0000 means every random-entry path finished at or above the recorded total — evidence the entries were worse than uninformed timing, which is not what a large p is usually taken to mean.",
+  );
 
   return {
     paths: EDGE_PATHS,
@@ -135,6 +145,7 @@ export function runEdgeTest(inputs: EdgeInputs): EdgeBlock | null {
     nullP95: f6(quantileBig(sorted, 0.95, quoteScale)),
     nullMean: f6(mean),
     pValue: pValue.toFixed(4),
+    nullsAtOrAbove: atOrAbove,
     skippedTrades: skipped,
     notes,
   };

@@ -114,6 +114,9 @@ export async function loadMarketData(
     warnings,
   };
   manifest.sha256 = hashMarketData(data);
+  // A refetch with identical content keeps the first capture: capturedAt is provenance, not a new identity.
+  const existing = await readDataset<MarketData>(key);
+  if (existing && existing.manifest.version === 4 && existing.manifest.sha256 === manifest.sha256) return existing;
   await writeDataset(key, data);
   return data;
 }

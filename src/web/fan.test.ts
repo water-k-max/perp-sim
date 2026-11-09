@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fanGeometry, histogram, linePath } from "./fan.js";
+import { fanGeometry, histogram, linePath, axisTicks } from "./fan.js";
 
 const fan = [
   { step: 0, p10: 90, p25: 95, p50: 100, p75: 105, p90: 110 },
@@ -32,4 +32,17 @@ test("linePath and histogram are exact", () => {
   assert.equal(bins.length, 5);
   assert.equal(bins.reduce((sum, b) => sum + b.count, 0), 10);
   assert.ok(bins.every(b => b.to > b.from));
+});
+
+test("axisTicks spans the inclusive bounds with 3–5 ticks and survives a degenerate range", () => {
+  const five = axisTicks(100, 200);
+  assert.deepEqual(five, [100, 125, 150, 175, 200]);
+  assert.equal(five[0], 100);
+  assert.equal(five[five.length - 1], 200);
+  assert.equal(axisTicks(0, 10, 3).length, 3);
+  assert.equal(axisTicks(0, 10, 99).length, 5, "count clamps to five");
+  assert.equal(axisTicks(0, 10, 1).length, 3, "count clamps to three");
+  assert.deepEqual(axisTicks(5, 5), [5], "a flat range collapses to one tick, never divides by zero");
+  assert.deepEqual(axisTicks(Infinity, 1), [Infinity]);
+  assert.ok(axisTicks(-50, 50).every(Number.isFinite));
 });

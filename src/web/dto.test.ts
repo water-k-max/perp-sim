@@ -1,6 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateResample, validateResponse, type ResampleBlock } from "./dto.js";
+import { runFailure, validateResample, validateResponse, type ResampleBlock } from "./dto.js";
+
+test("runFailure maps service, input, network and timeout failures to human copy", () => {
+  const storage = runFailure(null, { status: 503, body: { error: "Local cache storage is unavailable.", detail: "EPERM: operation not permitted, rename" } });
+  assert.equal(storage.message, "Local cache storage is unavailable.");
+  assert.match(storage.raw!, /EPERM/);
+  assert.ok(storage.hint.length > 0);
+  const input = runFailure(null, { status: 400, body: { error: "Lookback must be 1–90 whole days." } });
+  assert.equal(input.message, "Lookback must be 1–90 whole days.");
+  assert.equal(input.raw, null);
+  assert.match(runFailure(null, { status: 429, body: { error: "busy" } }).message, /already running/);
+  const unprocessable = runFailure(null, { status: 422, body: { error: "Data service unavailable. Retry." } });
+  assert.equal(unprocessable.message, "Data service unavailable. Retry.");
+  assert.match(unprocessable.hint, /server console/);
+  const internal = runFailure(null, { status: 500, body: { error: "boom" } });
+  assert.match(internal.message, /internal error/);
+  assert.equal(internal.raw, "boom");
+  // A non-JSON error body must not leak into the headline.
+  assert.match(runFailure(null, { status: 502, body: "bad gateway" }).message, /internal error/);
+  assert.match(runFailure(Object.assign(new Error("aborted"), { name: "AbortError" })).message, /timed out/);
+  assert.match(runFailure(new TypeError("Failed to fetch")).message, /Cannot reach/);
+  assert.equal(runFailure(new Error("The result contains an invalid amount.")).message, "The result contains an invalid amount.");
+  assert.equal(runFailure("plain string").message, "plain string");
+});
 
 /** A stored v1-shaped bundle, exactly as old run files carry it: the validator must keep accepting these. */
 function blockV1(): Record<string, unknown> {
@@ -106,6 +129,26 @@ test("validateResample accepts version 3 with the edge block, rejects it missing
   tamper(e => { e.pValue = "1.5"; });
   tamper(e => { e.skippedTrades = -1; });
   tamper(e => { e.notes = "one-sided"; });
+});
+
+test("version 4 adds the null tally: required, in range, and old documents still read", () => {
+  const v2 = validateResample({
+    ...blockV1(),
+    version: 2,
+    distributions: [{
+      ...(blockV1().distributions as Record<string, unknown>[])[0]!,
+      p05WinRateBps: 2500, medianWinRateBps: 4375, p95WinRateBps: 6875,
+      p05SharpeX1e4: -1200, medianSharpeX1e4: 900, p95SharpeX1e4: 3100,
+    }],
+  });
+  const edge = { paths: 300, realizedTotal: "2.0", nullP05: "-8.5", nullMedian: "1.0", nullP95: "9.5", nullMean: "0.5", pValue: "0.1234", skippedTrades: 0, notes: ["One-sided."] };
+  assert.equal(validateResample({ ...v2, version: 3, edge }).edge!.nullsAtOrAbove, undefined, "a stored v3 document is still readable without the tally");
+  assert.equal(validateResample({ ...v2, version: 4, edge: { ...edge, nullsAtOrAbove: 37 } }).edge!.nullsAtOrAbove, 37);
+  assert.throws(() => validateResample({ ...v2, version: 4, edge }), /random-entry null/);
+  for (const bad of [-1, 301, 1.5, "37"]) {
+    assert.throws(() => validateResample({ ...v2, version: 4, edge: { ...edge, nullsAtOrAbove: bad } }), /random-entry null/, `tally ${JSON.stringify(bad)} accepted`);
+  }
+  assert.equal(validateResample({ ...v2, version: 4, edge: { ...edge, nullsAtOrAbove: 300 } }).edge!.nullsAtOrAbove, 300, "the ceiling count is legal");
 });
 
 test("validateResponse validates an optional resample block on a model result", () => {

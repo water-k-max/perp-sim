@@ -333,9 +333,14 @@ test("liquidation cancels queued later prints without booking them", async () =>
   });
   assert.equal(out.status, "liquidated");
   assert.equal(out.liquidatedAtBar, 2);
-  assert.equal(out.fills.length, 1);
+  // The breach books a reduce-only liquidation close; prints queued after it stay cancelled.
+  assert.equal(out.fills.length, 2);
   assert.equal(out.fills[0]!.t, 1002);
+  assert.equal(out.fills[1]!.tag, "liquidation");
+  assert.equal(out.fills[1]!.t, 1006);
+  assert.ok(out.fills.every((f) => f.t <= 1006), "no print after the breach is booked");
   assert.equal(out.orders[0]!.status, "partial");
+  assert.equal(out.orders[1]!.tag, "liquidation");
 });
 
 test("a mid-interval entry is not stressed by extremes that preceded it", async () => {
@@ -361,6 +366,45 @@ test("a mid-interval entry is not stressed by extremes that preceded it", async 
   assert.equal(markEntry.status, "liquidated");
   assert.equal(markEntry.liquidatedAtBar, 1);
   assert.deepEqual(markEntry.relaxedStressBars, []);
+});
+
+test("a liquidated run ends flat at breach proceeds, not mark equity, in both engines", async () => {
+  const { cfg } = load();
+  const cash = 200n * 10n ** 18n;
+  const size = 10n * cfg.oneBase;
+  const bars = syntheticBars().slice(0, 3).map((b, i) => ({ ...b, t: 1000 + i * 3, low: i === 1 ? 80n * 10n ** 18n : b.low }));
+  const breachPrice = 80n * 10n ** 18n;
+
+  const model = await run({ cfg, bars, cash, fillModel: "settlement-mark",
+    strategy: fixedPosition({ side: "long", size, atBar: 1 }),
+  });
+  const legacy = simulate({ cfg, bars, cash, entries: [{ bar: 1, side: "long", size, price: bars[1]!.mark }] });
+
+  assert.equal(model.status, "liquidated");
+  assert.equal(legacy.status, "liquidated");
+  assert.equal(model.liquidatedAtBar, 1);
+  assert.equal(model.liquidatedAtPrice, breachPrice);
+  assert.equal(legacy.liquidatedAtPrice, breachPrice);
+
+  // The breach books a reduce-only close at the breach price; the run ends flat.
+  const liqFill = model.fills.find((f) => f.tag === "liquidation");
+  assert.ok(liqFill, "the breach books a liquidation close fill");
+  assert.equal(liqFill!.price, breachPrice);
+  assert.equal(model.fundingOpen, 0n);
+  assert.equal(legacy.fundingOpen, 0n);
+  assert.ok(model.realizedPnl < 0n, "the breach close realizes the loss");
+  assert.ok(legacy.realizedPnl < 0n);
+
+  // Ending equity is the realised proceeds, strictly below the breach bar's mark equity.
+  const markEquity = model.trail[model.trail.length - 1]!.equityAtMark;
+  assert.ok(model.equityEnd < markEquity, "proceeds reflect the adverse breach price, not the mark");
+  assert.equal(model.equityEnd, legacy.equityEnd, "both engines agree on liquidation proceeds");
+  assert.equal(model.realizedPnl, legacy.realizedPnl);
+  assert.equal(model.feesTaker, legacy.feesPaid);
+
+  // The books still balance exactly through the liquidation close.
+  assert.equal(model.realizedPnl - model.fundingSettled - model.feesTaker - model.feesMaker - model.gasPaid, model.equityEnd - model.equityStart);
+  assert.equal(legacy.realizedPnl - legacy.fundingSettled - legacy.feesPaid, legacy.equityEnd - legacy.equityStart);
 });
 
 test("zero-latency callback cannot reuse its observed print", async () => {

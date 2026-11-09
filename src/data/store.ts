@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile, rename, unlink, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 
@@ -44,14 +45,34 @@ async function readObject(target: string): Promise<Record<string, unknown> | nul
   }
   catch (error) { throw new CacheCorruptionError(`Corrupt cache object ${target}: ${error}`); }
 }
+const SYNC_UNSUPPORTED = new Set(["EPERM", "EINVAL", "ENOSYS", "ENOTSUP"]);
+/** Directory fsync is a POSIX durability hint; Windows and some network filesystems reject it. The rename is the commit point. */
+export async function syncDirectory(target: string): Promise<void> {
+  try {
+    const directory = await open(target, "r");
+    try { await directory.sync(); } finally { await directory.close(); }
+  } catch (error) {
+    if (!SYNC_UNSUPPORTED.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+  }
+}
+const TRANSIENT_LOCK = new Set(["EPERM", "EACCES", "EBUSY"]);
+/** Windows can transiently lock a rename target (concurrent replace, antivirus scan); each attempt stays atomic. */
+async function replace(temp: string, target: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(temp, target); return; }
+    catch (error) {
+      if (attempt >= 8 || !TRANSIENT_LOCK.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      await delay(5 * 2 ** attempt);
+    }
+  }
+}
 async function atomic(target: string, body: unknown): Promise<void> {
   await mkdir(dirname(target), { recursive: true });
   const temp = `${target}.${randomUUID()}.tmp`;
   try {
     await writeFile(temp, gzipSync(canonical(body)), { flag: "wx", flush: true });
-    await rename(temp, target);
-    const directory = await open(dirname(target), "r");
-    try { await directory.sync(); } finally { await directory.close(); }
+    await replace(temp, target);
+    await syncDirectory(dirname(target));
   } finally { await unlink(temp).catch(error => { if (!missing(error)) throw error; }); }
 }
 /** Immutable full-content identity. Capture metadata is retained, unlike semantic hashes. */

@@ -154,6 +154,28 @@ export function simulate(input: SimInput): Outcome {
     if (equity < mmReq) {
       liquidatedAtBar = i;
       liquidatedAtPrice = priceChecked;
+      // Model the breach as a taker close at the breach price so ending equity is realised
+      // proceeds, not unrealised mark PnL. The taker fee stands in for the unexposed
+      // liquidation fee (disclosed by the shared API warning).
+      for (const lot of lots) {
+        const m = perpPositionAnalytics({
+          size: lot.size,
+          avgEntryPrice: lot.price,
+          entryFundingIndex: lot.entryFundingIndex,
+          markPrice: priceChecked,
+          projectedCumulativeFunding: bar.cum,
+          oneBase: cfg.oneBase,
+          effectiveImfBps: cfg.effectiveImfBps,
+          maintenanceMarginBps: cfg.mmBps,
+          closeOutMarginBps: cfg.closeOutBps,
+        });
+        const fee = takerFee(cfg, m.notional);
+        cash += m.unrealizedPnl - m.accruedFunding - fee;
+        realizedPnl += m.unrealizedPnl;
+        fundingSettled += m.accruedFunding;
+        feesPaid += fee;
+      }
+      lots.length = 0;
       break;
     }
 

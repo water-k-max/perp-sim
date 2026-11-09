@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { simulatePaths, walkPath, type PathTrade } from "./path.js";
+import { RESAMPLE_WORK_MAX, simulatePaths, walkPath, type PathTrade } from "./path.js";
 
 const E18 = 10n ** 18n;
 const start = 100n * E18;
@@ -24,12 +24,37 @@ test("max drawdown is measured from the account start, not a running high", () =
   assert.notEqual(out.maxDrawdown, 130n * E18);
 });
 
-test("bankruptcy fires when equity reaches or passes zero", () => {
+test("bankruptcy clamps the wipe at zero and reports a full drawdown", () => {
   const trades: PathTrade[] = [{ pnl: -60n * E18 }, { pnl: -41n * E18 }];
   const out = walkPath({ order: trades, start, sizing: "static" });
   assert.equal(out.bankruptcy, true);
-  // The worst point is one unit below zero: the drawdown from start exceeds start itself.
-  assert.equal(out.maxDrawdown, start + 1n * E18);
+  // A liquidating account cannot go below zero: the second trade lands exactly on the floor,
+  // so the worst point is zero and the drawdown from start is the whole account.
+  assert.deepEqual(out.curve, [start, 40n * E18, 0n]);
+  assert.equal(out.finalEquity, 0n);
+  assert.equal(out.maxDrawdown, start);
+  assert.equal(out.maxDrawdownBps, 10_000n);
+});
+
+test("bankruptcy is absorbing: later trades neither resurrect nor deepen the wipe", () => {
+  const out = walkPath({ order: [{ pnl: -110n * E18 }, { pnl: 50n * E18 }], start, sizing: "static" });
+  assert.equal(out.bankruptcy, true);
+  // The +50 is never applied — the curve stays pinned at zero for the remaining steps.
+  assert.deepEqual(out.curve, [start, 0n, 0n]);
+  assert.equal(out.finalEquity, 0n);
+  assert.equal(out.maxDrawdown, start);
+  assert.equal(out.maxLosingStreak, 1);
+  // Only the trades applied before the wipe count towards the path's own metrics.
+  assert.equal(out.winRateBps, 0n);
+});
+
+test("compound sizing never scales a PnL by a negative equity base", () => {
+  const trades: PathTrade[] = [{ pnl: -110n * E18 }, { pnl: 50n * E18 }, { pnl: -50n * E18 }];
+  const out = walkPath({ order: trades, start, sizing: "compound" });
+  // Without the barrier the second trade would size against a negative equity and flip to a loss.
+  assert.equal(out.finalEquity, 0n);
+  assert.deepEqual(out.curve, [start, 0n, 0n, 0n]);
+  assert.equal(out.bankruptcy, true);
 });
 
 test("compound sizing scales PnL by equity over start", () => {
@@ -55,15 +80,37 @@ test("zero-PnL trades neither extend nor reset a losing streak", () => {
   assert.equal(out.maxLosingStreak, 2);
 });
 
-test("simulatePaths is bit-identical under the same seed and differs under another", () => {
+test("simulatePaths is bit-identical under the same seed and differs under another", async () => {
   const trades: PathTrade[] = Array.from({ length: 12 }, (_, i) => ({ pnl: BigInt(i - 6) * E18 }));
   const run = (seed: string) =>
     simulatePaths({ trades, mode: "shuffle_without_replacement", sizing: "static", paths: 25, horizon: 30, start, seed });
-  const a = run("same");
-  const b = run("same");
+  const a = await run("same");
+  const b = await run("same");
   assert.deepEqual(a, b);
-  const c = run("different");
+  const c = await run("different");
   assert.notDeepEqual(a.map((p) => p.finalEquity), c.map((p) => p.finalEquity));
+});
+
+test("simulatePaths rejects a path set over the work budget before walking", async () => {
+  const trades: PathTrade[] = [{ pnl: E18 }];
+  await assert.rejects(
+    simulatePaths({ trades, mode: "bootstrap_with_replacement", sizing: "static", paths: RESAMPLE_WORK_MAX + 1, horizon: 1, start, seed: "over" }),
+    /work budget/,
+  );
+});
+
+test("simulatePaths yields to the event loop mid-set without changing the result", async () => {
+  const trades: PathTrade[] = Array.from({ length: 8 }, (_, i) => ({ pnl: BigInt(i - 4) * E18 }));
+  // 9000 × 40 = 360k steps over 2500-path chunks: several chunks remain after the first
+  // yield, so a macrotask queued here fires while the set is still walking.
+  const opts = { trades, mode: "bootstrap_with_replacement" as const, sizing: "static" as const, paths: 9000, horizon: 40, start, seed: "yield" };
+  let completed = false;
+  const pending = simulatePaths(opts).then((out) => { completed = true; return out; });
+  const firedWhileRunning = await new Promise<boolean>((resolve) => setImmediate(() => resolve(!completed)));
+  assert.equal(firedWhileRunning, true, "simulation ran to completion without yielding");
+  const yielded = await pending;
+  const straight = await simulatePaths(opts);
+  assert.deepEqual(yielded, straight);
 });
 
 test("walkPath validates starting equity and cap", () => {

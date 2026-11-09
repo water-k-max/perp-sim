@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Chart } from './Chart.js';
 import { Details } from './Details.js';
-import { ResamplePanel } from './Resample.js';
-import { amount, date, day, describeModel, number, type Result } from './dto.js';
+import { ResamplePanel, StaleNote } from './Resample.js';
+import { amount, date, day, describeModel, number, type Result, type RunFailure } from './dto.js';
 import type { HistoryEntry } from './history.js';
 
 function Metric({ id, value, signed = false, quote }: { id: string; value: string | undefined; signed?: boolean; quote?: string }) {
@@ -22,8 +22,12 @@ function Coverage({ data }: { data: Result | null }) {
   const warnings = data ? [...(!data.complete ? ['This run is incomplete. Treat the returned figures as partial results.'] : []), ...data.warnings] : [];
   return <section className="panel coverage"><div className="panel-heading"><h3>Data coverage</h3><span id="coverage-badge" className="pill">{!data ? 'NOT CHECKED' : failed ? 'INVARIANT FAILED' : clean ? 'COMPLETE' : 'REVIEW COVERAGE'}</span></div><p id="coverage-empty" className="muted" hidden={!!data}>Coverage is evaluated for each run. Missing data will be surfaced here.</p><dl id="coverage-list" hidden={!data}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value == null ? 'Not reported' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}</dd></div>)}</dl><ul id="warnings" className="warnings" hidden={!warnings.length}>{warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul></section>;
 }
-export function Results({ data, busy, badge, activity, exportReady, onExport, history, onClear, onEdit }: {
-  data: Result | null; busy: boolean; badge: string; activity: string; exportReady: boolean; onExport: () => void; history: HistoryEntry[]; onClear: () => void; onEdit: () => void;
+function FailureDetail({ failure }: { failure: RunFailure }) {
+  if (!failure.raw) return null;
+  return <details className="failure-raw"><summary>Technical detail</summary><code>{failure.raw}</code></details>;
+}
+export function Results({ data, failure, busy, badge, activity, stale, exportReady, onExport, history, onClear, onEdit }: {
+  data: Result | null; failure: RunFailure | null; busy: boolean; badge: string; activity: string; stale: string[]; exportReady: boolean; onExport: () => void; history: HistoryEntry[]; onClear: () => void; onEdit: () => void;
 }) {
   const a = data?.analytics;
   const panel = useRef<HTMLDivElement>(null);
@@ -44,10 +48,16 @@ export function Results({ data, busy, badge, activity, exportReady, onExport, hi
     window.visualViewport?.addEventListener('resize', measure);
     return () => { observer.disconnect(); window.removeEventListener('resize', measure); window.visualViewport?.removeEventListener('resize', measure); };
   }, []);
-  return <section className="results" id="results" aria-labelledby="results-title" aria-busy={busy} style={{ '--chart-clearance': `${stickyHeight ? stickyHeight + 32 : 16}px` } as CSSProperties}>
-    <div ref={panel} className={`panel chart-panel${stickyHeight ? ' chart-sticky' : ''}`}><div className="mobile-setup-controls"><button type="button" className="secondary" onClick={onEdit}>Edit setup</button></div><div className="panel-heading"><div><h3 id="results-title" tabIndex={-1}>Performance overview</h3><p id="result-context" className="muted">{data ? `${data.market} / ${data.quoteSymbol} · ${data.side.toUpperCase()} · ${amount(data.size)} ${data.market} · ${date(data.from)} – ${date(data.to)}` : 'Your results will appear here'}</p></div><div className="badges"><span id="fill-badge" className="pill" hidden={data?.model?.fillModel !== 'tape'} title={data?.model?.fillModel === 'tape' ? describeModel(data.model) : undefined}>MODELLED FILL</span><span id="result-badge" className="pill">{badge}</span></div></div>
-      <p id="activity" className="activity" role="status" aria-live="polite">{activity}</p>
-      <div id="empty" className="empty" hidden={!!data}><div className="empty-icon" aria-hidden="true">⌁</div><h4>A hypothesis needs a test.</h4><p>Choose a market and set your position.<br />Run a backtest to reveal its historical equity curve.</p><span>No simulated results yet</span></div>
+  // Sticky is only useful while there is a curve to keep in view; never pin an empty or failed panel.
+  const sticky = data && data.trail.length > 1 ? stickyHeight : 0;
+  return <section className="results" id="results" aria-labelledby="results-title" aria-busy={busy} style={{ '--chart-clearance': `${sticky ? sticky + 32 : 16}px` } as CSSProperties}>
+    <div ref={panel} className={`panel chart-panel${sticky ? ' chart-sticky' : ''}`}><div className="mobile-setup-controls"><button type="button" className="secondary" onClick={onEdit}>Edit setup</button></div><div className="panel-heading"><div><h3 id="results-title" tabIndex={-1}>Performance overview</h3><p id="result-context" className="muted">{data ? `${data.market} / ${data.quoteSymbol} · ${data.side.toUpperCase()} · ${amount(data.size)} ${data.market} · ${date(data.from)} – ${date(data.to)}` : 'Your results will appear here'}</p></div><div className="badges"><span id="fill-badge" className="pill" hidden={data?.model?.fillModel !== 'tape'} title={data?.model?.fillModel === 'tape' ? describeModel(data.model) : undefined}>MODELLED FILL</span><span id="result-badge" className={`pill${badge === 'RUN FAILED' ? ' pill-danger' : ''}`}>{badge}</span></div></div>
+      <p id="activity" className={`activity${failure ? ' activity-danger' : ''}`} role="status" aria-live="polite">{activity}</p>
+      {data && failure && <div className="error"><p>Run failed — the results below are from the previous run. {failure.message}</p><FailureDetail failure={failure} /></div>}
+      {data && !busy && <StaleNote fields={stale} />}
+      {!data && failure
+        ? <div id="empty" className="empty empty-failed"><div className="empty-icon" aria-hidden="true">!</div><h4>Run failed</h4><p>{failure.message}<br /><span className="muted">{failure.hint}</span></p><FailureDetail failure={failure} /><span>Real-fill resampling below does not need a successful backtest.</span></div>
+        : <div id="empty" className="empty" hidden={!!data}><div className="empty-icon" aria-hidden="true">⌁</div><h4>A hypothesis needs a test.</h4><p>Choose a market and set your position.<br />Run a backtest to reveal its historical equity curve.</p><span>No simulated results yet</span></div>}
       <Chart data={data} />
       <div className="chart-footer"><span>PRICE + FUNDING − FEES − GAS</span><button id="export" type="button" className="text-button" disabled={!exportReady || busy} onClick={onExport}>↓ Export JSON</button></div>
     </div>
@@ -63,7 +73,7 @@ export function Results({ data, busy, badge, activity, exportReady, onExport, hi
       <article className="panel metric"><h4>Sortino</h4><strong id="sortino">{!data ? '—' : a?.sortino != null ? number(a.sortino) : 'n/a'}</strong><small>Downside deviation only</small></article>
       <article className="panel metric"><h4>Turnover</h4><strong id="turnover">{a?.turnoverBps != null ? `${number(Number(a.turnoverBps) / 100, 0)}%` : '—'}</strong><small>Traded notional / mean equity</small></article>
       <article className="panel metric"><h4>Win rate</h4><strong id="winrate">{a?.winRateBps != null ? `${number(Number(a.winRateBps) / 100, 1)}%` : '—'}</strong><small id="trades-note">{a ? `${a.trades} closed · ${a.wins}W / ${a.losses}L` : 'Closed trades'}</small></article>
-      <article className="panel metric"><h4>Markout 1 h</h4><strong id="markout">{a?.markout1hBps != null ? `${number(Number(a.markout1hBps), 1)} bps` : '—'}</strong><small>After each fill, favourable = positive</small></article>
+      <article className="panel metric"><h4>Markout 1 h</h4><strong id="markout">{a?.markout1hBps != null ? `${number(Number(a.markout1hBps), 1)} bps` : '—'}</strong><small>Next settlement mark, 1 h after each fill; favourable = positive</small></article>
     </div>
     <Details data={data} />
     {data?.resample && <ResamplePanel data={data} />}

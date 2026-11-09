@@ -210,7 +210,10 @@ test("code reads current source/config/web bytes without caching or environment 
   await writeFile(join(project, ".env"), "DO_NOT_HASH=secret");
   await writeFile(join(project, "src", ".env"), "secret");
   await writeFile(join(project, "public", ".env"), "secret");
-  await symlink(join(project, ".env"), join(project, "src", "secret.ts"));
+  // A link into a secret tree must not be followed; a junction needs no symlink privilege on Windows.
+  await mkdir(join(root, "secret-tree"), { recursive: true });
+  await writeFile(join(root, "secret-tree", "leak.ts"), "secret");
+  await symlink(join(root, "secret-tree"), join(project, "src", "linked"), process.platform === "win32" ? "junction" : "dir");
   const previous = process.env.RUN_TEST_SECRET;
   try {
     process.env.RUN_TEST_SECRET = "never include environment secrets";

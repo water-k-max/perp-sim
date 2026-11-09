@@ -109,7 +109,7 @@ export function repriceSameBarAdverse(trades: readonly TradeRecord[], oneBase: b
   return { trades: out, repriced };
 }
 
-export function auditTradeList(list: TradeList, config: RunAssumptions, opts: AuditOptions): AuditResult {
+export async function auditTradeList(list: TradeList, config: RunAssumptions, opts: AuditOptions): Promise<AuditResult> {
   const threshold = opts.dismissalThresholdBps ?? DEFAULT_DISMISSAL_THRESHOLD_BPS;
   const shareBps = sameBarShareBps(list);
   const observed = config.fillModel !== "settlement-mark";
@@ -124,10 +124,10 @@ export function auditTradeList(list: TradeList, config: RunAssumptions, opts: Au
     seed: opts.seed,
   };
   const empty = list.trades.length === 0;
-  const exported = empty ? [] : simulatePaths({ trades: list.trades.map((t) => ({ pnl: t.pnl })), ...base });
+  const exported = empty ? [] : await simulatePaths({ trades: list.trades.map((t) => ({ pnl: t.pnl })), ...base });
   const skipReprice = empty || observed;
   const { trades: repricedTrades, repriced } = skipReprice ? { trades: [], repriced: 0 } : repriceSameBarAdverse(list.trades, opts.oneBase);
-  const repricedPaths = skipReprice ? [] : simulatePaths({ trades: repricedTrades, ...base });
+  const repricedPaths = skipReprice ? [] : await simulatePaths({ trades: repricedTrades, ...base });
   const exportedSummary = empty ? null : summarizePaths(exported, opts.quoteScale);
   const repricedSummary = skipReprice ? null : summarizePaths(repricedPaths, opts.quoteScale);
   const deltaBps =

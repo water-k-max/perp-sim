@@ -29,7 +29,7 @@ function rec(seq: number, pnl: bigint): TradeRecord {
   };
 }
 
-function analysis(): ResampleAnalysis {
+function analysis(): Promise<ResampleAnalysis> {
   return buildResampleAnalysis({
     runId: "d".repeat(64),
     list: { trades: Array.from({ length: 8 }, (_, i) => rec(i + 1, BigInt(((i * 11) % 7) - 3) * E18)), sameBarCount: 0, withoutExcursionCount: 0, window: { from: 1, to: 9 } },
@@ -51,8 +51,8 @@ function analysis(): ResampleAnalysis {
 
 const ACCOUNT = "0x" + "ab".repeat(20);
 
-test("pickBand prefers the shuffle distribution and expresses it as PnL offsets", () => {
-  const a = analysis();
+test("pickBand prefers the shuffle distribution and expresses it as PnL offsets", async () => {
+  const a = await analysis();
   const band = pickBand(a, 18);
   assert.equal(band.length, a.distributions[0]!.fan.length);
   assert.equal(a.distributions[0]!.mode, "shuffle_without_replacement");
@@ -64,8 +64,8 @@ test("pickBand prefers the shuffle distribution and expresses it as PnL offsets"
   for (const step of band) assert.ok(step.p10 <= step.p25 && step.p25 <= step.p50 && step.p50 <= step.p75 && step.p75 <= step.p90);
 });
 
-test("live fills accumulate exactly and outside/inside counts follow the band", () => {
-  const a = analysis();
+test("live fills accumulate exactly and outside/inside counts follow the band", async () => {
+  const a = await analysis();
   const band = pickBand(a, 18);
   // A live path that hugs the median of every step lands inside the inner band.
   const medianFills = band.slice(1).map((step, i) => ({
@@ -98,8 +98,8 @@ test("live fills accumulate exactly and outside/inside counts follow the band", 
   });
 });
 
-test("the JSON edge converts to decimal strings without losing the exact counts", () => {
-  const a = analysis();
+test("the JSON edge converts to decimal strings without losing the exact counts", async () => {
+  const a = await analysis();
   const test = buildForwardTest({
     runId: a.meta.source.runId,
     account: ACCOUNT,
@@ -116,8 +116,8 @@ test("the JSON edge converts to decimal strings without losing the exact counts"
   assert.ok(json.notes.some((n) => /not a forecast/.test(n)));
 });
 
-test("an analysis without distributions cannot offer a band", () => {
-  const a = analysis();
+test("an analysis without distributions cannot offer a band", async () => {
+  const a = await analysis();
   a.distributions = [];
   assert.throws(() => pickBand(a, 18), /no distribution/);
 });

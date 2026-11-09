@@ -72,8 +72,8 @@ export async function resampleStoredRun(runId: string, rawResample: unknown): Pr
     },
     edge: { bars, cfg },
   };
-  const analysis = buildResampleAnalysis(inputs);
-  const invariants = checkResample(analysis, inputs);
+  const analysis = await buildResampleAnalysis(inputs);
+  const invariants = await checkResample(analysis, inputs);
   await saveResampleAnalysis(runId, analysis.meta.seed, analysis, invariants);
   return { analysis, invariants };
 }

@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
-import { Configuration } from './Configuration.js';
+import { Configuration, watchFields, type ConfigFields } from './Configuration.js';
 import { WalletPanel } from './Wallet.js';
 import { ImportTradesPanel } from './ImportTrades.js';
 import { Results } from './Results.js';
-import { record, validateResponse, type RequestDTO, type Result } from './dto.js';
+import { changedLabels, runFailure, validateResponse, type RequestDTO, type Result, type RunFailure } from './dto.js';
 import { clearHistory, rememberRun, type HistoryEntry } from './history.js';
+
+class HttpFailure extends Error {
+  constructor(readonly status: number, readonly body: unknown) { super(`HTTP ${status}`); }
+}
 
 export function App() {
   const [result, setResult] = useState<Result | null>(null);
+  const [draft, setDraft] = useState<ConfigFields | null>(null);
+  const [ranWith, setRanWith] = useState<ConfigFields | null>(null);
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
   const lastRequest = useRef<RequestDTO | null>(null);
+  const lastFields = useRef<ConfigFields | null>(null);
   const [exportReady, setExportReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<RunFailure | null>(null);
   const [activity, setActivity] = useState('');
   const [badge, setBadge] = useState('AWAITING RUN');
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -33,10 +40,10 @@ export function App() {
     });
   }
 
-  async function run(request: RequestDTO) {
+  async function run(request: RequestDTO, fields: ConfigFields) {
     if (running.current) return;
     running.current = true;
-    setBusy(true); lastRequest.current = { ...request }; setExportReady(false); setError(null);
+    setBusy(true); lastRequest.current = { ...request }; lastFields.current = fields; setExportReady(false); setFailure(null);
     setActivity(result ? 'Running. Previous results stay below.' : 'Running…');
     setBadge(result ? 'PREVIOUS RESULT' : 'RUNNING');
     const controller = new AbortController();
@@ -45,18 +52,16 @@ export function App() {
       const response = await fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(request), signal: controller.signal });
       let data: unknown;
       try { data = await response.json(); } catch { throw new Error(`Unreadable response (HTTP ${response.status}).`); }
-      if (!response.ok) {
-        throw new Error(record(data) && typeof data.error === 'string' ? data.error : record(data) && typeof data.message === 'string' ? data.message : `Request failed (HTTP ${response.status}). Please retry.`);
-      }
+      if (!response.ok) throw new HttpFailure(response.status, data);
       const next = validateResponse(data);
-      setResult(next); setHistory(rememberRun(next)); setExportReady(true);
+      setResult(next); setHistory(rememberRun(next)); setExportReady(true); setRanWith(fields);
       const noFill = (next.orders || []).some(o => o.status === 'rejected' && o.tag === 'entry') && (next.fills || []).length === 0;
       setBadge(noFill ? 'NO FILL' : next.complete ? 'RUN COMPLETE' : 'PARTIAL RESULT');
       setActivity(next.complete ? 'Done.' : 'Partial result. Check data coverage.');
       if (window.matchMedia('(max-width: 650px)').matches) navigateSetup(false);
     } catch (error) {
       setSetupOpen(true);
-      setError(error instanceof Error && error.name === 'AbortError' ? 'Timed out after 3 minutes.' : error instanceof TypeError ? 'Cannot reach the backtest service.' : error instanceof Error ? error.message : String(error));
+      setFailure(error instanceof HttpFailure ? runFailure(null, { status: error.status, body: error.body }) : runFailure(error));
       setActivity(result ? 'Run failed. Results below are from the previous run.' : 'Run failed.');
       setBadge(result ? 'PREVIOUS RESULT' : 'RUN FAILED');
     } finally {
@@ -71,6 +76,7 @@ export function App() {
     document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  const stale = result && draft && ranWith ? changedLabels(draft, ranWith, watchFields(draft)) : [];
   return <>
     <a className="skip-link" href="#main">Skip to workspace</a>
     <aside className="sidebar">
@@ -88,8 +94,8 @@ export function App() {
       </section>
       <div className="workspace-heading"><h2>Your experiment</h2><span>01 / CONFIGURE &amp; SIMULATE</span></div>
       <div className="workspace">
-        <Configuration mobile={mobile} open={setupOpen} hasResults={!!result} onEdit={() => navigateSetup(true)} onShowResults={() => navigateSetup(false)} busy={busy} error={error} onError={setError} onRun={request => { void run(request); }} onRetry={() => { if (lastRequest.current) void run(lastRequest.current); }} />
-        <Results onEdit={() => navigateSetup(true)} data={result} busy={busy} badge={badge} activity={activity} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
+        <Configuration mobile={mobile} open={setupOpen} hasResults={!!result} onEdit={() => navigateSetup(true)} onShowResults={() => navigateSetup(false)} busy={busy} error={failure?.message ?? null} onDraft={setDraft} onRun={(request, fields) => { void run(request, fields); }} onRetry={() => { if (lastRequest.current && lastFields.current) void run(lastRequest.current, lastFields.current); }} />
+        <Results onEdit={() => navigateSetup(true)} data={result} failure={failure} busy={busy} badge={badge} activity={activity} stale={stale} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
       </div>
       <WalletPanel />
       <ImportTradesPanel />

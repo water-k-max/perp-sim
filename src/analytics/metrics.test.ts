@@ -4,7 +4,7 @@ import type { Bar } from "../history/bars.js";
 import type { MarketConfig } from "../history/market.js";
 import { run } from "../engine/loop.js";
 import { fixedPosition } from "../strategy/fixed.js";
-import { computeMetrics, markouts, metricsView } from "./metrics.js";
+import { computeMetrics, markouts, metricsView, settlementPriceAt } from "./metrics.js";
 import { attribute } from "./attribution.js";
 import { isqrt, sqrtScaled, toDecimal } from "./decimal.js";
 
@@ -93,4 +93,24 @@ test("markouts look up a later price and sign by direction", () => {
   assert.equal(markouts([fill], priceAt, 60), 100n, "1 quote on 100 is 100 bps");
   assert.equal(markouts([{ ...fill, side: "sell" }], priceAt, 60), -100n);
   assert.equal(markouts([fill], () => null, 60), null);
+});
+
+test("settlementPriceAt gives the first mark at or after the second asked for", () => {
+  const priceAt = settlementPriceAt(bars);
+  assert.equal(priceAt(1_000), 100n * E18, "a settlement landing on the requested second is its own price");
+  assert.equal(priceAt(1_001), 101n * E18, "one second past a settlement never reads back to the bar that just closed");
+  assert.equal(priceAt(1_000 + 5 * 3_600), 104n * E18);
+  assert.equal(priceAt(1_000 + 6 * 3_600), null, "past the series the horizon is unobservable");
+  assert.equal(settlementPriceAt([])(0), null);
+});
+
+test("markouts on settlement marks skip fills whose horizon never printed", () => {
+  const fill = {
+    id: "f", orderId: "o", side: "buy" as const, size: oneBase, price: 100n * E18, quote: 100n * E18,
+    t: 1_000, role: "taker" as const, fee: 0n, feeBps: 0n, consumedFillIds: [], tag: null,
+  };
+  // fill.t + 1 h is bar 1's settlement exactly: 101 against a 100 fill.
+  assert.equal(markouts([fill], settlementPriceAt(bars), 3_600), 100n);
+  // With only two settlements the hour horizon is unreadable, so the fill is skipped, not guessed.
+  assert.equal(markouts([fill], settlementPriceAt(bars.slice(0, 2)), 5 * 3_600), null);
 });

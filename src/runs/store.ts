@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { hashMarketData } from "../data/ingest.js";
-import { cacheRoot, CacheCorruptionError, readSnapshot, sha256, writeSnapshot } from "../data/store.js";
+import { cacheRoot, CacheCorruptionError, readSnapshot, sha256, syncDirectory, writeSnapshot } from "../data/store.js";
 import type { MarketData } from "../data/types.js";
 import { stableManifest, validateManifest, type RunManifest } from "./manifest.js";
 
@@ -170,8 +170,7 @@ export async function saveRun<T>(input: {
     await writeFile(temp, JSON.stringify({ version: 3, runId: manifest.runId, bundleDigest }), { flag: "wx", flush: true });
     try { await link(temp, target); }
     catch (error) { if (!hasCode(error, "EEXIST")) throw error; }
-    const parent = await open(directory(), "r");
-    try { await parent.sync(); } finally { await parent.close(); }
+    await syncDirectory(directory());
   } finally {
     await unlink(temp).catch(error => { if (!hasCode(error, "ENOENT")) throw error; });
   }
