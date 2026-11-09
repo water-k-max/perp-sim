@@ -131,8 +131,16 @@ const INDEXER_COUNT_CEILING = 10_000;
  *  queries against the indexer at once. Measured on Hideki 2026-11-09, the same read over the same
  *  2,000 fills succeeded on one run and failed with `database query error` on the next, so at the
  *  cap the ground-truth leg of this report depended on how loaded a shared testnet endpoint
- *  happened to be. Reading a quarter of the cap at a time is the part this side of the wire can
- *  choose; the retry and `changesUnread` below cover the part it cannot.
+ *  happened to be.
+ *
+ *  A quarter of the cap is what this side of the wire can choose; the retry and `changesUnread`
+ *  below cover the part it cannot. The size is not sold as a cure: two passes over the same 1,000
+ *  bot-driven fills at 1,000, 250 and then 100 per read — 30 calls in all — returned every row and
+ *  failed nothing at any size, so nothing there proves 250 makes the error less likely. What the
+ *  smaller chunk does buy is bounded: a refusal costs 250 fills instead of 1,000, puts three
+ *  concurrent queries at the indexer instead of ten, and on that sample finished the same 1,000
+ *  fills sooner (1.5–1.6 s per pass at 250, 2.0–6.4 s at 1,000, 3.9–4.0 s at 100 — a fixed cost
+ *  per call is what makes the smallest size the slowest of the three).
  */
 const CHANGE_CHUNK = 250;
 

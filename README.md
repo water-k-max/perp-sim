@@ -62,6 +62,14 @@ The NOVA artwork is supplied by the project owner in `public/nova-storyboard.png
 
 Every response carries a `coverage` block — the window the fill read actually covered, how many pages it took, which bound stopped it and what the indexer counts in that window — and the panel prints it as one sentence above the distributions, in a `full window read`, `partial window` or `no fills` tone. A truncated read is never presented as a whole one, and the CLI prints the identical sentence. On this venue bot-scale accounts routinely sit on the indexer's `10,000`-row count ceiling, and that number is a lower bound, so the sentence says "at least". The count that provides it is only read when the fill read fell short: a read that ended because its page cursor ran out has already proved its own coverage, and the count is a bounded 10,001-row scan rather than an aggregate on this endpoint.
 
+### Calibration
+
+`pnpm test:calibration` (`src/resample/calibration.ts`, also run by `test:resample`) is what lets the word "Monte Carlo" be used without a caveat. The estimator is aimed at a process that is solved exactly rather than sampled: a finite-horizon gambler's-ruin dynamic program on a `+win/−lose` lattice with an absorbing barrier at zero — the same freeze `walkPath` applies — cross-checked against the closed form `((1−p)/p)^a`, which shares no code with it. Bootstrapping a pool of 55 whole-unit wins and 45 losses with replacement *is* an i.i.d. ±1 walk at p = 0.55, so the two sides are one process, one solved and one sampled, and containment is a real test rather than a tautology.
+
+Achieved, 2,000 paths per line and fixed seeds: exact 5% quantile 14 units at coverage 0.0771, sampled 0.0780 inside a 99.7% Wilson band of [0.0618, 0.0979]; median 0.5498 exact against 0.5535 sampled; ruin 0.0609 exact against 127/2,000 sampled, and 0.4791 against 0.4920 for the shallower account. The random-entry p-value is calibrated on the shipped test: 600 `runEdgeTest` runs over a null that is null by construction (recorded entries drawn from `perp-sim/resample/v1`, null paths from `perp-sim/edge/v1`, so independent hash domains) give KS 0.0383 against the 0.0555 critical value, decile χ² 8.47 against 16.919, 5% exceedance 4.33% with the band holding 5%, and both ends of the 1/301 ladder reached. Breaking the code breaks the gate: swapping the lattice's win and loss steps fails three tests, and moving the absorbing barrier from `<= 0n` to `< 0n` fails the bankruptcy containment.
+
+What the calibration does not cover is stated in the same file: the process is synthetic, no real account's PnL series has a known law, and the shuffle-mode test pins the *disagreement* with the i.i.d. law on purpose. Funding, fees and sizing are not calibrated by any of this.
+
 ## Fill models
 
 `--model settlement-mark` (default) prices each order at the next settlement mark. It is simple, fully reproducible, and deliberately labelled as *not* a book fill.

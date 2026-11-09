@@ -25,6 +25,7 @@
     "test:data": "tsx --test src/data/*.test.ts",
     "test:analytics": "tsx --test src/analytics/*.test.ts",
     "test:resample": "tsx --test src/resample/*.test.ts src/forward/*.test.ts",
+    "test:calibration": "tsx --test src/resample/calibration.test.ts",
     "test:verify": "tsx --test src/verify/*.test.ts",
     "typecheck": "tsc --noEmit && pnpm typecheck:web"
   },

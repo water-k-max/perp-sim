@@ -89,11 +89,62 @@ Ranked by how much they change what you can claim out loud.
    (A.2) is *self-consistency on the fit distribution* — a p95 of a sample is crossed by ~5% of that
    same sample almost by construction; it is not out-of-sample calibration and it does not validate
    the interpolation against anything external.
+   **Fixed: the estimator is now aimed at a process solved exactly.** `src/resample/calibration.ts`
+   is a new, dependency-free module — floats on purpose, because this is the one place the object is a
+   probability rather than money — holding a finite-horizon gambler's-ruin DP on a `+winUnits/
+   −loseUnits` lattice with an absorbing barrier at zero (the same freeze `walkPath` applies), a Wilson
+   score interval, and a uniformity report (KS against `1.36/√n`, decile χ² against 16.919). Eleven
+   tests in `src/resample/calibration.test.ts` (run by `pnpm test:resample`, and standalone by
+   `pnpm test:calibration`) put the shipped `simulatePaths` next to that law. A pool of exactly 55 wins
+   and 45 whole-unit losses bootstrapped with replacement *is* an i.i.d. ±1 walk at p = 0.55, so the
+   two sides are the same process, one solved and one sampled. Measured, with 2,000 paths per line and
+   fixed seeds:
+   - The nominal tails land where the law says. Starting from 20 units over 60 steps, the exact 5%
+     quantile is 14 units with coverage 0.0771; the Monte Carlo put 156/2,000 = 0.0780 paths at or
+     below it, 99.7% Wilson band [0.0618, 0.0979]. Same shape at the median (0.5498 exact, 0.5535
+     sampled) and the 95% (0.9554 exact, 0.9485 sampled, band [0.9316, 0.9614]).
+   - Bankruptcy containment at two depths: 10 units → exact 0.0609 against 127/2,000 = 0.0635 in
+     [0.0490, 0.0819]; 3 units → exact 0.4791 against 0.4920 in [0.4586, 0.5255]. The second line is
+     what makes the first mean something — an estimator that could not tell those apart would be
+     asserting nothing.
+   - **The shipped random-entry test is calibrated, not just reproducible.** 600 `runEdgeTest` calls
+     over a trade list whose entries come from `deriveStream` (`perp-sim/resample/v1`) while the null
+     paths come from `deriveEdgeStream` (`perp-sim/edge/v1`) — separate hash domains, so the recorded
+     total is an independent draw from the same distribution as the 300 null totals it is ranked
+     against, i.e. a true null by construction. Result: KS 0.0383 against the 0.0555 critical value,
+     decile χ² 8.47 against 16.919 (counts 55/61/58/64/46/58/67/61/56/74 where 60 is expected), 5%-
+     exceedance 4.33% with band [2.97%, 6.27%] holding 5%, and both ends of the achievable ladder
+     actually reached — `min = 0.0033 = 1/301` and `max = 1.0000`. Every p-value also lands on a
+     multiple of 1/301, which is the add-one correction holding as data rather than as a comment.
+   - The gates are not won by emptiness, and were checked by breaking them: swapping `winUnits` for
+     `loseUnits` in the DP fails three different tests, and moving the absorbing barrier from
+     `equity <= 0n` to `equity < 0n` in `path.ts` fails the bankruptcy-containment test — so a
+     one-unit error in the freeze is now visible. Deliberate alternatives (a skewed, a lumped and a
+     tail-heavy p-value set) all come back `uniform: false`.
+   **What is still not claimed:** the calibrated process is synthetic. Nothing here validates the
+   estimator against a *real* account's PnL series — no such series has a known law — and the
+   shuffle-mode test pins the *disagreement* on purpose (a permutation of a fixed pool cannot be
+   i.i.d., and every surviving path ends at the same total), so this section calibrates the
+   bootstrap walk and the edge p-value, not funding, fees or sizing.
 2. **The ruin probability is never compared to the analytic answer.** For a biased random walk on
    equity there is a closed form. `bankruptcyRate` is reported
    ([src/resample/stats.ts:127-128](../src/resample/stats.ts)) and never checked against it. Today's
    live run reported `0.000` in all three modes, which is also a case of a gate won by emptiness —
    nothing in the repo proves the counter can count.
+   **Fixed on both halves.** The closed form is now in the repo as a *cross-check*, not as the answer
+   being tested: `analyticRuinLimit` computes `((1−p)/p)^a` for p > ½ (and 1 otherwise, the fair-game
+   case) with no shared code with the DP, and the test asserts the DP climbs toward it from below.
+   Measured at p = 0.55, a = 3: limit 0.5477, DP 0.4639 → 0.5120 → 0.5368 → 0.5459 → 0.5473 at
+   horizons 50/100/200/400/600 — strictly increasing, never above the limit (a finite horizon cannot
+   be more ruinous than the infinite one), and within 1e-3 of it by H = 600. At p = 0.5 the finite
+   answer creeps toward 1 without reaching it, which is the other half of the same theorem.
+   The counter demonstrably counts: on all 2,000 paths at both depths the number flagged bankrupt
+   equals the number whose final equity is exactly `0n` (127 and 984), the lattice's atom at zero
+   equals the DP's own ruin probability to 1e-12, and the shallower account is measurably more ruinous
+   than the deeper one. What remains true is the caveat that produced this gap: `bankruptcyRate`
+   reported `0.000` on a real account because that account genuinely did not go bust in the window —
+   a zero is still not evidence the counter works, which is why the working proof is a synthetic
+   process with a known answer rather than another live run.
 3. **The fee leg is vacuous on the only network this tool reads.** Measured today across all 22 live
    Hideki perp markets: `taker=0 maker=0` bps×1k for every symbol
    (`probe/fee-sweep.mts`), the values taken straight from the on-chain parameter epoch
@@ -210,6 +261,13 @@ Ranked by how much they change what you can claim out loud.
       the chain recorded", and it keeps `ok: false`. Permanent refusals (a field this role may not
       query, an unusable variable, an unindexed table) are still not retried: `src/retry.test.ts`
       pins both directions.
+    - Reads are chunked at **250 fills**, and the reason is bounded damage, not a measured cure. The
+      same 1,000 bot-driven fills were re-read twice at 1,000 / 250 / 100 fills per call
+      (30 calls): **zero failures at every size**, so 250 cannot be claimed to lower the error rate.
+      It does mean one refusal costs 250 fills instead of 1,000 and puts three concurrent queries at
+      the indexer instead of ten, and on that sample it was also the fastest way through the window
+      — 1.5–1.6 s per pass at 250 against 2.0–6.4 s at 1,000 and 3.9–4.0 s at 100, since each call
+      carries a fixed cost no matter how few fills it asks for.
 
 ### A.4 What genuinely *is* proven, live, today
 
