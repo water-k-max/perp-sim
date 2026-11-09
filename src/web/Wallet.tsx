@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { amount, changedLabels, fetchMarkets, number, record, type Market } from './dto.js';
-import { DIST_NOTES, Histogram, FanChart, Stat, ShuffleNote, StaleNote } from './Resample.js';
+import { DIST_NOTES, CoverageNote, Histogram, FanChart, Stat, ShuffleNote, StaleNote } from './Resample.js';
+import { parseCoverage, type FillReadCoverage } from '../verify/fill-coverage.js';
 
 type FanBand = { step: number; p10: string; p25: string; p50: string; p75: string; p90: string };
 type Dist = { mode: string; paths: number; median: string; p05: string; p95: string; cvar95: string; bankruptcyRate: string; medianMaxDrawdownBps: number; medianMaxLosingStreak: number; finalEquities: string[]; fan: FanBand[] };
-type Wallet = { account: string; market: string; closedTrades: number; winRateBps: number; realizedTotal: string; distributions: Dist[]; warnings: string[] };
+type Wallet = { account: string; market: string; closedTrades: number; winRateBps: number; realizedTotal: string; coverage: FillReadCoverage; distributions: Dist[]; warnings: string[] };
 
 const num = (v: unknown) => typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v));
 function parse(value: unknown): Wallet {
   if (!record(value) || typeof value.account !== 'string' || !Number.isInteger(value.closedTrades) || !Number.isInteger(value.winRateBps) || !num(value.realizedTotal) || !Array.isArray(value.distributions) || !Array.isArray(value.warnings)) throw new Error('Unexpected response.');
+  parseCoverage(value.coverage);
   for (const d of value.distributions as unknown[]) {
     if (!record(d) || typeof d.mode !== 'string' || !Number.isInteger(d.paths) || !num(d.median) || !num(d.p05) || !num(d.p95) || !num(d.cvar95) || !num(d.bankruptcyRate) || !Array.isArray(d.finalEquities) || !(d.finalEquities as unknown[]).every(num)) throw new Error('Unexpected response.');
     if (!Array.isArray(d.fan) || !(d.fan as unknown[]).every(b => record(b) && Number.isInteger(b.step) && num(b.p10) && num(b.p25) && num(b.p50) && num(b.p75) && num(b.p90))) throw new Error('Unexpected response.');
@@ -74,6 +76,7 @@ export function WalletPanel() {
       </div>
       <p className="error" role="alert" hidden={error === null}>{error}</p>
       {result && <StaleNote fields={changed} />}
+      {result && <CoverageNote coverage={result.coverage} />}
       {result && (dist ? <>
         <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : d.mode.startsWith('block') ? 'Block boot.' : 'Bootstrap'}</span></label>)}</div>
         <FanChart dist={dist} quote={quote} original={[]} />

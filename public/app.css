@@ -148,6 +148,16 @@ input:not([type=checkbox]):not([type=radio]),select{height:44px}
 .stale-note{background:#32291f;border:1px solid #5c4730;border-left:3px solid #ffd09b;border-radius:6px;padding:10px 12px;margin:12px 0;font-size:12px;line-height:1.6;color:#ffd09b}
 .stale-note strong{color:#ffe7c2;font-weight:700}
 
+/* How much of the requested window the chain read behind these numbers actually covered. */
+.coverage-note{border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:6px;padding:10px 12px;margin:12px 0;font-size:12px;line-height:1.6;background:#101a2b;color:#c6d3e9}
+.coverage-note strong{font-weight:700}
+.coverage-note.tone-complete{border-left-color:var(--good)}
+.coverage-note.tone-complete strong{color:var(--good)}
+.coverage-note.tone-empty{border-left-color:var(--violet)}
+.coverage-note.tone-empty strong{color:var(--violet)}
+.coverage-note.tone-partial{background:#32291f;border-color:#5c4730;border-left-color:#ffd09b;color:#ffd09b}
+.coverage-note.tone-partial strong{color:#ffe7c2}
+
 /* Metric cards now carry their definition as visible text, so the caption reads as a sentence. */
 .metric small{line-height:1.5}
 

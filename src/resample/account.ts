@@ -6,6 +6,7 @@
  *  gross realized figure (before fees and funding), and the result says so.
  */
 import type { ReconcileReport } from "../verify/replay-account.js";
+import type { FillReadCoverage } from "../verify/fill-coverage.js";
 import { simulatePaths, type SizingMode } from "./path.js";
 import { summarizePaths } from "./stats.js";
 import { distributionBlock, type DistributionBlock } from "./analysis.js";
@@ -26,6 +27,11 @@ export type AccountResample = {
   openingFills: number;
   winRateBps: number;
   realizedTotal: string;
+  /**
+   *  What the fill read actually covered. The distributions describe these fills, so a
+   *  truncated read has to be visible next to them rather than only inside the warnings.
+   */
+  coverage: FillReadCoverage;
   distributions: DistributionBlock[];
   warnings: string[];
 };
@@ -63,6 +69,8 @@ export async function resampleAccount(report: ReconcileReport, opts: AccountResa
     account: report.account, market: report.market, closedTrades: trades.length,
     openingFills: report.rows.length - trades.length,
     winRateBps: trades.length === 0 ? 0 : Math.round((wins * 10_000) / trades.length),
-    realizedTotal: `${neg ? "-" : ""}${whole}.${frac}`, distributions, warnings,
+    realizedTotal: `${neg ? "-" : ""}${whole}.${frac}`,
+    coverage: report.coverage,
+    distributions, warnings,
   };
 }

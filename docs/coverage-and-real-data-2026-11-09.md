@@ -171,6 +171,45 @@ Ranked by how much they change what you can claim out loud.
     ([src/verify/replay-account.ts:62,204-217](../src/verify/replay-account.ts)), so the accounts with
     the most data are the ones truncated hardest, while the human-scale accounts have too few closes
     to distribute.
+    **Fixed: the truncation is now typed data, printed identically by both surfaces, and it is
+    measured rather than assumed.** Three things were wrong with the old state — the limits were
+    described in free-text warnings that a second panel could forget to copy, the population figure
+    was fetched on *every* run even when the read had already proved itself complete, and the
+    position-change read could abort the whole reconcile on one transient indexer failure. What is
+    here now:
+
+    - `src/verify/fill-coverage.ts` (new, dependency-free so the browser bundle and the CLI can both
+      import it) defines `FillReadCoverage` — first/last fill timestamps kept, rows scanned, rows in
+      window, rows kept, pages, `truncated`, which bound stopped it, the indexer's own count and
+      whether that count sat on its ceiling — plus `fillCoverageStamp`, the single function that
+      turns it into one sentence. `replay-account.ts` returns the block; the CLI's `cover` line and
+      the wallet panel's `CoverageNote` both print that same sentence, so the two cannot disagree.
+      The three older free-text warnings that said roughly the same thing in three places are
+      deleted, and the `unknown` tone a first draft had was removed too: `parseCoverage` refuses a
+      response without the block, so a stamp is never rendered over missing data.
+    - The count is now **gated**. It only runs when the read fell short, because a read that ended
+      because its page cursor ran out has already proved it covered the window. That matters: the
+      SDK's `countUserFills` is not an aggregate query here. Measured 2026-11-09
+      (`probe/count-scope.mts`), this endpoint rejects it for the anonymous role —
+      `field 'Fill_aggregate' not found in type: 'query_root'` — so every call falls through to a
+      bounded scan of `COUNT_FALLBACK_CAP + 1 = 10,001` id-rows, timed at **385 ms over 7 d and
+      2,309 ms over 30 d** on the busiest sampled account, and `aggregateCount` drops the
+      `truncated` flag when it returns, so a count of exactly `10,000` is a **lower bound and never
+      a total**. `INDEXER_COUNT_CEILING` is stated as data and the sentence says "at least".
+    - The count is scoped by `pool`, not by market kind, and that is a measured choice rather than a
+      workaround: the SDK's `FillsScope` type carries no `marketType` field at all (though
+      `applyFillScope` honours one at runtime), while of the 20 perp pools present in the newest
+      4,000 perp fills, **none carries a single non-PERP row** (probe sections B–D). A pool-only
+      count therefore selects the same population as the `marketType`-filtered page read.
+    - The position-change leg no longer takes the report down with it. `retryRead` now treats
+      Hasura's `database query error` as the transient it is — the identical read over the same
+      2,000 fills returned `unmatched 0` on one run and threw that message on the next with nothing
+      changed — and a chunk that still cannot be answered after retries is recorded as
+      `changesUnread: { fills, reason }`, left as `null` rows so every later fill keeps its own
+      update, warned in the report as "the shortfall is on this side of the wire, not a gap in what
+      the chain recorded", and it keeps `ok: false`. Permanent refusals (a field this role may not
+      query, an unusable variable, an unindexed table) are still not retried: `src/retry.test.ts`
+      pins both directions.
 
 ### A.4 What genuinely *is* proven, live, today
 

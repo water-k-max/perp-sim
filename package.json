@@ -20,7 +20,7 @@
     "replay-account": "tsx src/bin/replay-account.ts",
     "replay-run": "tsx src/bin/replay-run.ts",
     "test:runs": "tsx --test src/runs/*.test.ts",
-    "test:units": "tsx --test src/units.test.ts",
+    "test:units": "tsx --test src/units.test.ts src/retry.test.ts",
     "test:engine": "tsx --test src/engine/*.test.ts",
     "test:data": "tsx --test src/data/*.test.ts",
     "test:analytics": "tsx --test src/analytics/*.test.ts",

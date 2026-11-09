@@ -2,6 +2,7 @@ import type { FillRow, PerpFeeRecord, PerpPositionChange, SomniaMarketsClient } 
 import { fillFee, PositionBook } from "../engine/portfolio.js";
 import { feeBps, type MarketConfig } from "../history/market.js";
 import { retryRead } from "../retry.js";
+import type { FillReadCoverage } from "./fill-coverage.js";
 
 /**
  *  Ground truth for the accounting: take a real account's fills, push them through the same
@@ -71,6 +72,14 @@ export type ReconcileReport = {
   changes: number;
   /** Fills the indexer has no position update for; they cannot be checked against ground truth. */
   unmatched: number;
+  /**
+   *  Fills whose position update this run could not obtain *at all* — the read was refused even
+   *  after retries, so no answer came back. These are inside `unmatched` too; the count is broken
+   *  out because a shortfall of this kind means the ground-truth leg is incomplete by our side of
+   *  the wire, not because the chain failed to record an update, and it must not be read as one.
+   */
+  changesUnread: { fills: number; reason: string | null };
+  coverage: FillReadCoverage;
   rows: RowReconcile[];
   mismatches: number;
   fees: {
@@ -104,6 +113,32 @@ export type ReconcileReport = {
 /** One literal raw unit of tolerance, for entry-price averaging on a partial close. */
 const PNL_TOLERANCE = 1n;
 
+/**
+ *  The ceiling on the indexer's fill count (SDK `indexerRead.d.ts:120` `COUNT_FALLBACK_CAP` —
+ *  not re-exported from the package root, so the number is restated rather than imported).
+ *  `countUserFills` asks for one row more than this and, past it, hands back this exact number
+ *  with the truncation flag dropped, so a count that equals the ceiling means "at least".
+ *  Measured on Hideki 2026-11-09 (`probe/count-scope.mts`): `Fill_aggregate` is rejected for the
+ *  anonymous role, so the bounded scan is the only path here and every 10,000 is a lower bound,
+ *  never an exact total. Reaching it is the signature of a bot-driven account.
+ */
+const INDEXER_COUNT_CEILING = 10_000;
+
+/**
+ *  Fills per position-change read. The SDK's own cap is 1,000, but it does not send one query at
+ *  that size: it splits the fills into ten 100-transaction-hash chunks and runs them concurrently
+ *  (`perp/history.js:565-569`), so a 1,000-fill call is ten concurrent `PerpPositionChanges`
+ *  queries against the indexer at once. Measured on Hideki 2026-11-09, the same read over the same
+ *  2,000 fills succeeded on one run and failed with `database query error` on the next, so at the
+ *  cap the ground-truth leg of this report depended on how loaded a shared testnet endpoint
+ *  happened to be. Reading a quarter of the cap at a time is the part this side of the wire can
+ *  choose; the retry and `changesUnread` below cover the part it cannot.
+ */
+const CHANGE_CHUNK = 250;
+
+/** The first line of a failure, without the stack the SDK chains underneath it. */
+const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split("\n")[0]!.slice(0, 200);
+
 export async function reconcileAccount(options: ReconcileOptions): Promise<ReconcileReport> {
   const { client, cfg, account, fromSec, toSec } = options;
   const maxFills = options.maxFills ?? 2_000;
@@ -111,21 +146,34 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
   const who = account.toLowerCase();
   const pool = cfg.pool.toLowerCase();
 
-  const fills = await readAccountFills(client, who, pool, fromSec, toSec, maxFills, warnings);
-  // The SDK caps one position-change read at 1,000 fills; chunk to stay under it, keeping
-  // the one-to-one order so changes[i] still lines up with fills[i].
+  const read = await readAccountFills(client, who, pool, fromSec, toSec, maxFills);
+  const fills = read.rows;
+  // The SDK caps one position-change read at 1,000 fills, and inside that cap it fans the request
+  // out into ten 100-hash GraphQL queries run at once (`perp/history.js` CHANGE_READ_TX_CHUNK).
+  // We hand it fewer fills so one read asks the indexer for less at a time, and we keep the
+  // one-to-one order so changes[i] still lines up with fills[i].
   const changes: (PerpPositionChange | null)[] = [];
-  for (let at = 0; at < fills.length; at += 1_000) {
-    const part = await retryRead(`listPerpPositionChangesForFills ${at}`, () =>
-      client.listPerpPositionChangesForFills(who, fills.slice(at, at + 1_000)),
-    );
-    changes.push(...part);
+  let changeReadFailed = 0;
+  let changeReadError: string | null = null;
+  for (let at = 0; at < fills.length; at += CHANGE_CHUNK) {
+    const part = fills.slice(at, at + CHANGE_CHUNK);
+    try {
+      changes.push(...(await retryRead(`listPerpPositionChangesForFills ${at}`, () => client.listPerpPositionChangesForFills(who, part))));
+    } catch (error) {
+      // Retries are spent and the indexer still would not answer. Blank the chunk rather than
+      // abort: those fills take their place as `null`, so every later fill keeps its own update,
+      // and the shortfall is reported as a count with the reason instead of a stack trace.
+      changes.push(...part.map(() => null));
+      changeReadFailed += part.length;
+      if (changeReadError === null) changeReadError = firstLine(error);
+    }
   }
 
   const feeRows = await retryRead("listPerpFees", () =>
     client.listPerpFees({ account: who, pool, limit: 1_000 }),
   );
   const feesInWindow = feeRows.filter((f) => Number(f.timestamp) >= fromSec && Number(f.timestamp) <= toSec);
+  if (feeRows.length >= 1_000) warnings.push("the fee read is capped at 1,000 rows and reached it: fee records older than the newest 1,000 for this account and pool were not compared");
 
   const book = new PositionBook(cfg, 0n);
   const rows: RowReconcile[] = [];
@@ -224,7 +272,12 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
   const feeLeg = zeroRateVenue && tradeRows === 0 && expectedFees === 0n ? "vacuous-zero-rate" : "informative";
 
   if (!seeded && fills.length > 0) warnings.push("no position update was returned for any fill; nothing could be seeded");
-  if (unmatched > 0) warnings.push(`${unmatched} fills have no indexed position update and were skipped`);
+  if (changeReadFailed > 0) {
+    warnings.push(
+      `${changeReadFailed} fill(s) could not be paired with an indexed position update because the indexer refused that read even after retries (${changeReadError}). They are counted as unmatched, so this leg checked ${fills.length - unmatched} of ${fills.length} fills: the shortfall is on this side of the wire, not a gap in what the chain recorded, and the run is not a complete ground-truth check.`,
+    );
+  }
+  if (unmatched - changeReadFailed > 0) warnings.push(`${unmatched - changeReadFailed} fills have no indexed position update and were skipped`);
   if (book.lots.length > 0) {
     warnings.push(`${book.lots.length} lot(s) still open at the end of the window; open positions have no realized check`);
   }
@@ -249,6 +302,38 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
     );
   }
 
+  const firstFillSec = fills.length > 0 ? Number(fills[0]!.timestamp) : null;
+  const lastFillSec = fills.length > 0 ? Number(fills[fills.length - 1]!.timestamp) : null;
+  const truncated = read.stoppedBy !== null || fills.length < read.inWindow;
+  // The population figure only earns an extra read when the read fell short: a full read is
+  // already proved by the page cursor running out, and the count is a 10,001-row scan
+  // (0.4–2.3s live — see INDEXER_COUNT_CEILING). It is scoped by `pool` rather than market kind
+  // because the SDK's `FillsScope` takes no `marketType`, and every perp pool on this chain was
+  // measured to carry PERP fills only, so the pool already selects the page read's population.
+  const counted = truncated
+    ? await retryRead("countUserFills", () => client.countUserFills(who, { pool, since: fromSec, until: toSec })).catch(() => null)
+    : null;
+  const coverage: FillReadCoverage = {
+    firstFillSec,
+    lastFillSec,
+    rowsScanned: read.scanned,
+    rowsInWindow: read.inWindow,
+    rowsKept: fills.length,
+    pages: read.pages,
+    truncated,
+    stoppedBy: read.stoppedBy,
+    accountFillsInWindow: counted,
+    accountFillsAtCeiling: counted !== null && counted >= INDEXER_COUNT_CEILING,
+  };
+  // What the read covered is the `coverage` block's job, and `fillCoverageStamp` is the one
+  // sentence both this report's surfaces print — repeating it here would only risk the two
+  // disagreeing. This note is the one thing the shape cannot say: what the ceiling implies.
+  if (coverage.accountFillsAtCeiling) {
+    warnings.push(
+      `the indexer's fill count reached its hard ceiling of ${INDEXER_COUNT_CEILING} rows and is only a lower bound, so this looks like a bot-driven account and the population in the coverage block is understated.`,
+    );
+  }
+
   return {
     account: who,
     pool,
@@ -258,6 +343,8 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
     fills: fills.length,
     changes: changes.filter((c) => c !== null).length,
     unmatched,
+    changesUnread: { fills: changeReadFailed, reason: changeReadError },
+    coverage,
     rows,
     mismatches,
     fees: {
@@ -276,7 +363,15 @@ export async function reconcileAccount(options: ReconcileOptions): Promise<Recon
   };
 }
 
-/** Page the account's fills newest-first, keep the window and the pool, return oldest-first. */
+/**
+ *  Page the account's fills newest-first, keep the window and the pool, return oldest-first.
+ *
+ *  Every limit that can end this read early is reported instead of silently applied: the
+ *  `maxFills` cap, the page bound, and the row counts on both sides of the filters. A caller
+ *  that raises `maxFills` gets its page bound raised with it (at least 20 pages of headroom),
+ *  so the cap the caller chose stays the binding limit rather than a hidden 40-page ceiling
+ *  deciding what was reconciled.
+ */
 async function readAccountFills(
   client: SomniaMarketsClient,
   account: string,
@@ -284,16 +379,20 @@ async function readAccountFills(
   fromSec: number,
   toSec: number,
   maxFills: number,
-  warnings: string[],
-): Promise<FillRow[]> {
+): Promise<{ rows: FillRow[]; inWindow: number; scanned: number; pages: number; stoppedBy: "maxFills" | "page-bound" | null }> {
   const rows: FillRow[] = [];
+  const pageLimit = 500;
+  const pageBound = Math.max(40, Math.ceil(maxFills / pageLimit) + 20);
   let cursor: string | undefined;
   let pages = 0;
+  let scanned = 0;
+  let stoppedBy: "maxFills" | "page-bound" | null = null;
   for (;;) {
     const page = await retryRead(`getUserFillsPage ${account.slice(0, 10)}`, () =>
-      client.getUserFillsPage(account, { marketType: "PERP", pool, since: fromSec, until: toSec, limit: 500, cursor }),
+      client.getUserFillsPage(account, { marketType: "PERP", pool, since: fromSec, until: toSec, limit: pageLimit, cursor }),
     );
     pages += 1;
+    scanned += page.fills.length;
     for (const fill of page.fills) {
       if (fill.pool?.toLowerCase() !== pool) continue;
       const t = Number(fill.timestamp);
@@ -303,11 +402,11 @@ async function readAccountFills(
     cursor = page.nextCursor ?? undefined;
     if (!cursor) break;
     if (rows.length >= maxFills) {
-      warnings.push(`stopped at the ${maxFills}-fill cap; older fills in the window were not read`);
+      stoppedBy = "maxFills";
       break;
     }
-    if (pages > 40) {
-      warnings.push("stopped after 40 pages; the window is larger than this read will cover");
+    if (pages >= pageBound) {
+      stoppedBy = "page-bound";
       break;
     }
   }
@@ -315,7 +414,8 @@ async function readAccountFills(
     const ab = Number(a.blockNumber ?? 0) - Number(b.blockNumber ?? 0);
     return ab !== 0 ? ab : (a.logIndex ?? 0) - (b.logIndex ?? 0);
   });
-  return rows.slice(0, maxFills);
+  const kept = rows.slice(0, maxFills);
+  return { rows: kept, inWindow: rows.length, scanned, pages, stoppedBy };
 }
 
 /**

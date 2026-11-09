@@ -7,9 +7,18 @@
  *  empty request body — a message that names the genesis check, not the socket that did not open
  *  in time. A backtester cannot tell a genuine result apart from an outage, so the retry is
  *  bounded and it says out loud when it fired.
+ *
+ *  The indexer's own transient failure is in here too. `database query error` is what Hasura
+ *  answers when the SQL behind one read did not complete — measured on Hideki 2026-11-09, the
+ *  identical `PerpPositionChanges` read over the same 2,000 fills returned `0 unmatched` on one run
+ *  and threw `indexer PerpPositionChanges failed: database query error` on the next, with no change
+ *  to the query, the account or the window. The SDK wraps that as an `IndexerError` that preserves
+ *  the server's wording, so matching the phrase is the only way to tell it apart from a read that
+ *  is wrong on purpose. Permanent failures — a field this role may not query, an unusable variable,
+ *  a table that has not been indexed — keep their own distinct messages and still abort.
  */
 const RETRYABLE =
-  /genesis check failed|took too long|timed out|timeout|Socket closed|connection|fetch failed|EAI_AGAIN|ECONNRESET|ECONNREFUSED/i;
+  /genesis check failed|took too long|timed out|timeout|database query error|Socket closed|connection|fetch failed|EAI_AGAIN|ECONNRESET|ECONNREFUSED/i;
 
 export async function retryRead<T>(
   label: string,

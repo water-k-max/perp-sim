@@ -2,6 +2,7 @@ import { createClient } from "../client.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { fromRaw, utc } from "../units.js";
 import { reconcileAccount } from "../verify/replay-account.js";
+import { fillCoverageStamp } from "../verify/fill-coverage.js";
 
 const arg = (name: string, fallback: string): string => {
   const i = process.argv.indexOf(`--${name}`);
@@ -29,6 +30,12 @@ console.log(`${report.market}/${cfg.quoteSymbol}  pool ${report.pool}`);
 console.log(`account ${report.account}`);
 console.log(`window  ${utc(report.fromSec)} -> ${utc(report.toSec)}`);
 console.log(`read    ${report.fills} fills, ${report.changes} indexed position updates, ${report.unmatched} unmatched`);
+if (report.changesUnread.fills > 0) {
+  console.log(`        ${report.changesUnread.fills} of those unmatched because the position-update read itself failed: ${report.changesUnread.reason} — the leg is incomplete, not the chain`);
+}
+// The same sentence the wallet panel shows, so the two can never disagree about what was covered.
+const cov = fillCoverageStamp(report.coverage);
+console.log(`cover   ${cov.label.toUpperCase()}: ${cov.text}`);
 
 console.log(`\nfees  expected ${fromRaw(report.fees.expected, cfg.quoteDecimals)}  recorded ${fromRaw(report.fees.actual, cfg.quoteDecimals)}  diff ${fromRaw(report.fees.diff, cfg.quoteDecimals)}  (${report.fees.rows} fill-fee rows)`);
 console.log(`      ${report.fees.leg === "vacuous-zero-rate"

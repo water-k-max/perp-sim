@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { amount, number, record, validateResample, type ResampleBlock, type Result } from './dto.js';
 import { axisTicks, fanGeometry, histogram, linePath, type Band } from './fan.js';
 import { edgeVerdict, pValueResolution } from '../resample/verdict.js';
+import { fillCoverageStamp, type FillReadCoverage } from '../verify/fill-coverage.js';
 
 const CYAN = '#60e2e9';
 const VIOLET = '#99b7ff';
@@ -95,6 +96,12 @@ export function ShuffleNote({ mode, p05, p95, sizing }: { mode: string; p05: str
 export function StaleNote({ fields }: { fields: string[] }) {
   if (!fields.length) return null;
   return <p className="stale-note" role="status"><strong>Stale result.</strong> {fields.join(', ')} changed after this read, so everything below still answers the previous inputs. Run it again to refresh.</p>;
+}
+
+/** How much of the requested window the chain read behind these numbers actually covered. */
+export function CoverageNote({ coverage }: { coverage: FillReadCoverage }) {
+  const stamp = fillCoverageStamp(coverage);
+  return <p className={`coverage-note tone-${stamp.tone}`} role="status" data-tone={stamp.tone}><strong>{stamp.label}.</strong> {stamp.text}</p>;
 }
 
 /** The random-entry null: how likely the recorded total is under uninformed timing. */

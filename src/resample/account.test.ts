@@ -2,14 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { accountTrades, resampleAccount } from "./account.js";
 import type { ReconcileReport } from "../verify/replay-account.js";
+import type { FillReadCoverage } from "../verify/fill-coverage.js";
 
 const row = (closed: bigint, pnl: bigint) => ({
   fillId: "f", txHash: "0x", t: 1, kind: null,
   expected: { sizeAfter: null, closedSize: null, exitPrice: null, realizedPnl: null },
   actual: { sizeAfter: 0n, closedSize: closed, exitPrice: null, realizedPnl: pnl }, diffs: [],
 });
+/** A full read of the four fills the fixture books; the passthrough test mutates it. */
+const coverage: FillReadCoverage = {
+  firstFillSec: 0, lastFillSec: 1, rowsScanned: 4, rowsInWindow: 4, rowsKept: 4, pages: 1,
+  truncated: false, stoppedBy: null, accountFillsInWindow: null, accountFillsAtCeiling: false,
+};
 const report = (pnls: bigint[]): ReconcileReport => ({
   account: "0xabc", pool: "0xp", market: "BTC", fromSec: 0, toSec: 1, fills: pnls.length + 1, changes: 0, unmatched: 0,
+  changesUnread: { fills: 0, reason: null }, coverage,
   rows: [row(0n, 0n), ...pnls.map((p) => row(1n, p))], mismatches: 0,
   fees: {
     expected: 0n, actual: 0n, diff: 0n, rows: 0, leg: "vacuous-zero-rate",
@@ -48,4 +55,15 @@ test("distributions carry fan bands one step per trade", async () => {
         && Number(band.p50) <= Number(band.p75) && Number(band.p75) <= Number(band.p90));
     }
   }
+});
+test("the fill-read coverage reaches the response, so truncation cannot be dropped on the way out", async () => {
+  const full = await resampleAccount(report([5_000_000n, -2_000_000n]), opts);
+  assert.deepEqual(full.coverage, coverage);
+
+  const cut = await resampleAccount({
+    ...report([5_000_000n, -2_000_000n]),
+    coverage: { ...coverage, truncated: true, stoppedBy: "maxFills", rowsKept: 2_000, rowsInWindow: 2_000, accountFillsInWindow: 10_000, accountFillsAtCeiling: true },
+  }, opts);
+  assert.equal(cut.coverage.stoppedBy, "maxFills");
+  assert.equal(cut.coverage.accountFillsAtCeiling, true);
 });
