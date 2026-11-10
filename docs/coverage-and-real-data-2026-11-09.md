@@ -200,6 +200,27 @@ Ranked by how much they change what you can claim out loud.
    caller in `src/web/`. The forward-test code and its tests exist, but the product never runs it, so
    the one feature that would answer "does the model still hold after you pressed the button" is dark
    to every user of the UI.
+   **Resolved by deletion (2026-11-10), because wiring it would have shipped a lie.** The route was
+   live-tested against real Hideki data before deciding, and the answer changed the finding: this is
+   not an orphaned *working* feature, it is a feature that does not work. The band's x-axis is the
+   stored run's *trade* count and its amplitude that run's position size; a live account is indexed by
+   *fills* (one trade arrives as many fills) and sized by what it actually traded. Two measurements,
+   the second deliberately the strongest case available — an 83-trade SMA run, not a 1-trade one, so
+   the band really did have 83 steps:
+   - 1-trade stored run vs 500 live fills: `firstOutsideSeq: 1`, `outsideP10P90: 500` — every live
+     point outside, against a band whose five quantiles are all `-49.339235`.
+   - 83-trade SMA run vs 500 live fills (`0x85c69563…`, `skippedFills: 0`): `firstOutsideSeq: 21`,
+     `outsideP10P90: 480`, `insideP25P75: 12`, and **418 of the 500 band readings had `p10 === p90`**
+     — past step 83, `band[Math.min(i + 1, band.length - 1)]` clamps to one number, so any live total
+     but that exact value is declared outside by the index arithmetic, not by the market.
+   Removing it is the honest half of the rule "show what fully works": the module
+   (`src/forward/forward.ts` + its 4 tests, which is why `test:resample` moved 130 → 126), the route,
+   the `test:resample` glob entry, and the design
+   doc's `## Forward check` section are gone, and the decision is recorded in AGENTS.md Phase 9 and
+   [docs/resampling-design.md](resampling-design.md) so it is not rebuilt. What *does* fully work, and
+   stays: the real-address path (`/api/accounts/:addr/reconcile` and `/resample`), which answers the
+   same question the sound way — resample the account's own trade list, one population tested against
+   a distribution drawn from it. Item 11 made that truncation honest; nothing here is dark to the UI.
 8. **UI has no automated coverage.** `src/web/` contains two test files, `dto.test.ts` and
    `fan.test.ts`. Every design change from this sprint — the failure banner, the sticky chart,
    contrast, hit targets, the cursor readout, the Stat notes — is verified by hand in the browser,

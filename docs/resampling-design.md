@@ -29,8 +29,21 @@ Trade-order resampling answers "how bad could the path have been given these tra
 
 Each of 300 null paths walks the recorded trades in order and, for every one, enters at a uniformly random settlement bar and closes at the settlement mark exactly that trade's holding time later — same sides, same sizes, same holding times, no information. Null trades are priced by the engine's own close arithmetic (floored gross PnL, the protocol kernel's settled funding, one taker fee on the closing leg), so a null trade and a recorded trade are the same object priced the same way; a canary pins that equality against real position round trips. The p-value is the share of null totals at or above the recorded total, add-one corrected so it can never report an impossible zero. It is one-sided: a small p-value says the entries beat random timing on this history — a reason to look closer, not proof of skill. Trades whose holding time exceeds the available history cannot be placed anywhere and are skipped and counted, never invented.
 
-## Forward check
-Live fills are accumulated exactly and compared with the resampled band, counting how many fall inside or outside.
+## Forward check — removed (2026-11-10)
+A forward test was built (`/api/forward`): poll a public account's fills, accumulate their
+chain-reported realized PnL, and count how many landed inside the p10–p90 band of a stored run. It
+measured nothing, and the reason is structural rather than a tuning problem. The band is a
+distribution over the *order of that run's own trades*, so its x-axis is a trade count and its
+amplitude is that run's position size; a live account's series is indexed by *fills* — one trade
+arrives as many fills — and sized by whatever the account actually traded. Once the live count
+passes the last band step the comparison clamps to that step, where all five quantiles are the same
+number, so any live total except that exact value reads "outside". Measured live: an 83-trade SMA
+run against 500 real Hideki fills gave 418 zero-width band readings and 480 of 500 flagged outside,
+with `firstOutsideSeq` at 21 — a verdict produced by the index arithmetic, not by the market.
+
+The question it was reaching for is answered properly by account resampling below: take the
+account's own closing fills as the trade list and shuffle that, so the distribution is generated
+from the same population it is testing. That path stays.
 
 ## Account resampling
 A public address's closing fills (chain-reported gross realized PnL) become the trade list, then shuffle, bootstrap and block bootstrap run as above. Fees and funding are not deducted, and fewer than 30 trades is flagged as unstable. Each distribution carries the same per-step fan bands as the run panel, so the wallet panel draws the p10–p90 equity fan over trades.

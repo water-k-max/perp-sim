@@ -113,10 +113,15 @@ badges; add a MODELLED DISTRIBUTION note when paths < 5,000.
 Tests: `src/backtest-api.test.ts` style — UI contract via the API DTO validator
 (`src/web/dto.ts`), snapshot of the fan-band path strings for a pinned seed.
 
-### Phase 9 — (optional, needs scope decision) forward-test analog
-The forward check's perp-sim variant: poll a public account's fills and land them against a stored
-band. Requires a stored band and a watched account — do not build unless the owner
-provides both; it must stay read-only.
+### Phase 9 — forward-test analog: built, measured, removed (2026-11-10)
+Polling a public account's fills and landing them on a stored run's band was implemented and run
+live, then deleted. It cannot be made correct: the band's x-axis is the run's *trade* count while a
+live account's x-axis is its *fill* count (one trade, many fills), and the two populations have
+different sizes, so past the last band step every live point is compared against a clamped,
+zero-width quantile. Measured on a 83-trade SMA run against 500 live Hideki fills: 418 of the 500
+band readings had `p10 === p90`, and 480 read "outside". The sound version of the same question —
+resample an account's *own* trade list — is `POST /api/accounts/:addr/resample` and the wallet
+panel; keep that. Do not rebuild this comparison against another run's band.
 
 ## Verification gate (every phase)
 

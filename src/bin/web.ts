@@ -7,7 +7,6 @@ import { loadMarketData } from "../data/ingest.js";
 import { canonical, listDatasets, sha256 } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
-import { forwardStoredRun, forwardTestJson } from "../forward/forward.js";
 import { resampleStoredRun } from "../resample/service.js";
 import { resampleAccount } from "../resample/account.js";
 import { parseResampleRequest } from "../resample/analysis.js";
@@ -46,7 +45,7 @@ const assets: Record<string, [string, string]> = {
  *  three 3.54× and 3.05×. Path simulation is synchronous CPU on one thread, so the ratio never
  *  approaches 1: concurrency buys that route no throughput at all, and slightly less than
  *  serialising would have. The slots are kept for the routes that made #9 a complaint — account
- *  reconcile, account resample and forward test are indexer-bound, and their wall clock is network
+ *  reconcile and account resample are indexer-bound, and their wall clock is network
  *  waits that do overlap — and for the queue and the coalescing, which are pure wins. The number
  *  that does not depend on the thread is coalescing: eight identical resamples cost one job.
  */
@@ -205,30 +204,6 @@ createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/datasets") {
     try { json(res, 200, { root: "local cache", datasets: await listDatasets(50) }); }
     catch (error) { console.error("Cache listing failed:", error instanceof Error ? error.message : "Unknown error"); json(res, 500, { error: "Cache listing failed. Details are in the local server terminal." }); }
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/forward") {
-    const runId = url.searchParams.get("runId") ?? "";
-    const account = url.searchParams.get("account") ?? "";
-    if (!/^[a-f0-9]{64}$/.test(runId)) { json(res, 400, { error: "A full run digest is required." }); return; }
-    if (!/^0x[0-9a-fA-F]{40}$/.test(account)) { json(res, 400, { error: "A 0x-prefixed 20-byte account address is required." }); return; }
-    const to = Math.min(Math.floor(Date.now() / 1000), Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000)));
-    const from = Number(url.searchParams.get("from") ?? to - 30 * 86_400);
-    if (!Number.isInteger(from) || !Number.isInteger(to) || from <= 0 || to - from > 35 * 86_400 || from >= to) {
-      json(res, 400, { error: "The forward-test window must be at most 35 days and end after it starts." });
-      return;
-    }
-    await viaLane(res, laneKey("forward", { runId, account, from, to }), async () => {
-      try {
-        const result = await forwardStoredRun({ client: createClient().client, account, runId, fromSec: from, toSec: to });
-        return { status: 200, body: forwardTestJson(result) };
-      } catch (error) {
-        if (error instanceof Error && error.message === "No saved run with that id.") return { status: 404, body: { error: "No saved run with that id." } };
-        console.error("Forward test failed:", error instanceof Error ? error.message : "Unknown error");
-        return { status: 422, body: { error: "Forward test failed." } };
-      }
-    });
     return;
   }
 
