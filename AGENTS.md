@@ -158,7 +158,7 @@ costs minutes and is not in the gate — run it whenever a guard in `src/web` is
 `oos-no-lookahead` (held trades absent from fit inputs; error).
 Each must fail if the mechanism it checks is broken — extend the existing tamper tests.
 
-## Honesty rules (product-level, enforced in UI copy)
+## Honesty rules (product-level)
 
 - Distribution output is a model of trade-order risk, not a forecast.
 - The audit's same-bar count is what can be counted, never presented as a bound.
@@ -166,3 +166,13 @@ Each must fail if the mechanism it checks is broken — extend the existing tamp
 - OOS crossing is an investigation trigger, not a verdict.
 Keep the existing MODELLED FILL badge discipline: every modelled quantity is labelled as
 modelled where it is displayed.
+
+**2026-11-10 — the enforcement moved out of standing page copy and into the places the numbers are
+read.** Removed at the user's instruction: the page footer (`NOVA PROTOCOL / Backtest Lab`,
+`Research, not financial advice.`) and the wallet panel's entire `warnings` list — which carried the
+gross-PnL note and the small-sample note ("Only N closed trades: percentiles over so few observations
+are wide and unstable"). Those two now appear nowhere in the UI. That is a decision, not an
+oversight: do not re-add them as a drive-by fix. What still holds the line is per-`Stat` notes beside
+the number each one describes, the `MODELLED FILL` and `PARTIAL RESULT` badges, the run and resample
+warning lists, and the Methodology panel. The server still emits the wallet `warnings` array and
+`src/web/Wallet.tsx` still validates it — the panel simply no longer prints it.

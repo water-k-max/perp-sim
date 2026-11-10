@@ -93,7 +93,6 @@ export function WalletPanel() {
         </div>
         <Histogram values={dist.finalEquities.map(Number)} label="Final equity" />
       </> : <p className="muted">No closed trades in this window.</p>)}
-      {result && result.warnings.length > 0 && <ul className="warnings">{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
     </div>
   </section>;
 }
