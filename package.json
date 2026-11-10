@@ -20,7 +20,7 @@
     "replay-account": "tsx src/bin/replay-account.ts",
     "replay-run": "tsx src/bin/replay-run.ts",
     "test:runs": "tsx --test src/runs/*.test.ts",
-    "test:units": "tsx --test src/units.test.ts src/retry.test.ts",
+    "test:units": "tsx --test src/units.test.ts src/retry.test.ts src/test-reach.test.ts",
     "test:engine": "tsx --test src/engine/*.test.ts",
     "test:data": "tsx --test src/data/*.test.ts",
     "test:analytics": "tsx --test src/analytics/*.test.ts",
@@ -28,6 +28,7 @@
     "test:calibration": "tsx --test src/resample/calibration.test.ts",
     "test:verify": "tsx --test src/verify/*.test.ts",
     "test:guards": "bash test/guard-injections.sh",
+    "gate": "pnpm typecheck && pnpm test:units && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:resample && pnpm test:calibration && pnpm test:verify && pnpm test:runs && pnpm test:web && pnpm build:web",
     "typecheck": "tsc --noEmit && pnpm typecheck:web"
   },
   "dependencies": {

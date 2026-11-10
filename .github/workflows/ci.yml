@@ -1,0 +1,85 @@
+name: ci
+
+# Two jobs, deliberately separated by what they touch.
+#
+#   gate — every suite, offline, on every push and pull request. No network, no secrets, no env:
+#          `src/config.ts` falls back to the Hideki defaults so a bare checkout is a complete
+#          configuration, and the suites reach only loopback servers they spawn themselves
+#          (`backtest-repro.test.ts`) or a `t.mock`'d fetch. Nothing in `pnpm gate` may change that:
+#          a gate that needs the venue is a gate that goes red when the venue hiccups.
+#   live — read-only against Somnia Hideki (50383), on a schedule, on main, and by hand. This is
+#          where drift gets caught: a market list that changes, an indexer that starts refusing a
+#          query shape, an arithmetic invariant that breaks against real settlement data. It never
+#          blocks a pull request, and it never holds a credential — every call it makes is a read.
+#
+# `pnpm test:guards` (the src/web mutation harness) is in neither job: it re-runs a test file per
+# injection and costs minutes. Run it when a render guard changes; see AGENTS.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Live backtest window, in days"
+        required: false
+        default: "14"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: offline gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Typecheck, every suite (src/test-reach.test.ts fails the run if a test file or a whole
+      # suite stops being reachable from `pnpm gate`), then the browser bundle.
+      - run: pnpm run gate
+
+  live:
+    name: live read-only chain check
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Pinned so a default changing in `src/config.ts` cannot quietly repoint the nightly at
+      # another network. No key belongs here: this job reads, signs and sends nothing.
+      CHAIN_ID: "50383"
+      INDEXER_URL: "https://hideki-dev.smk.somnia.host/v1/graphql"
+      RPC_URL: "https://api.hideki2.infra.testnet.somnia.network"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # 1. The venue identity: perp markets as the indexer lists them, on the chain named above.
+      - run: pnpm probe:markets
+      # 2. Market resolution plus the on-chain state and system config behind a pre-trade check.
+      - run: pnpm preflight
+      # 3. The whole read path over real settlement and candle history, and the invariants over
+      #    what it computes. Exit 1 is a read failure, 2 is an invariant breach; both are red.
+      - name: pnpm backtest
+        run: pnpm backtest --days "${{ github.event.inputs.days || '7' }}"

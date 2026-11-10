@@ -126,18 +126,36 @@ panel; keep that. Do not rebuild this comparison against another run's band.
 ## Verification gate (every phase)
 
 ```bash
-pnpm typecheck
-pnpm test:units && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:verify && pnpm test:runs && pnpm test:web
+pnpm gate
 ```
+
+`gate` is `pnpm typecheck`, then every suite — `test:units`, `test:engine`, `test:data`,
+`test:analytics`, `test:resample`, `test:calibration`, `test:verify`, `test:runs`, `test:web` —
+then `build:web`. It is offline: `src/config.ts` ships Hideki defaults, and the suites reach only a
+`t.mock`'d fetch or a loopback server they spawn themselves. A gate that needs the venue is a gate
+that goes red when the venue hiccups, so nothing in it may start making network calls.
+
+It is called `gate`, not `ci`, because `pnpm ci` is pnpm's own frozen-install command: a script with
+that name is unreachable by its obvious invocation, and typing the obvious invocation reinstalls
+`node_modules` instead of running the tests.
+
+`src/test-reach.test.ts` runs inside `test:units` and closes the hole that an aggregate always has —
+it fails if a test file under `src/` stops being reachable from any `test:*` script, if a pattern
+matches no file, or if a `test:*` script stops being named by `gate`. A new suite is therefore only
+run once it is added to `gate`.
+
+Same aggregate in CI: `.github/workflows/ci.yml`, job `gate` (Node 22 / pnpm 12, every push and PR).
+Job `live` runs the three read-only chain commands — `probe:markets`, `preflight`, `backtest` — on a
+schedule, on `main`, and by hand; it holds no credential and never blocks a pull request. Neither
+job runs `test:guards`.
 
 `pnpm test:guards` is the mutation harness for the `src/web` render guards: it injects each bug a
 guard claims to catch and requires the named test to go red. It re-runs a test file per probe, so it
 costs minutes and is not in the gate — run it whenever a guard in `src/web` is added or edited.
 
-Add `pnpm test:resample` (`tsx --test src/resample/*.test.ts`) at Phase 1 and add it to the
-gate. `src/verify/invariants.ts` gains: `resample-deterministic` (re-run same seed ⇒ equal
-hash; error level), `resample-bounds` (probabilities in [0,1], CVaR ≤ VaR, percentile
-ladder ordered; error), `oos-no-lookahead` (held trades absent from fit inputs; error).
+`src/verify/invariants.ts` has `resample-deterministic` (re-run same seed ⇒ equal hash; error level),
+`resample-bounds` (probabilities in [0,1], CVaR ≤ VaR, percentile ladder ordered; error),
+`oos-no-lookahead` (held trades absent from fit inputs; error).
 Each must fail if the mechanism it checks is broken — extend the existing tamper tests.
 
 ## Honesty rules (product-level, enforced in UI copy)

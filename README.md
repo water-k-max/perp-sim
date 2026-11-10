@@ -164,10 +164,14 @@ The settlement-mark default keeps every old command reproducible; `--model tape`
 ## Verification
 
 ```bash
-pnpm typecheck
-pnpm test:units && pnpm test:web && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:verify
+pnpm gate          # typecheck + every suite + the browser bundle, offline
+pnpm test:guards   # mutation harness for the src/web render guards (minutes, not in the gate)
 ```
 
+- `gate` runs `typecheck`, `test:units`, `test:engine`, `test:data`, `test:analytics`, `test:resample`, `test:calibration`, `test:verify`, `test:runs` and `test:web` (347 tests as measured on 2026-11-10), then `build:web`. It is called `gate` rather than `ci` because `pnpm ci` is pnpm's own frozen-install command — a script named `ci` is not what typing `pnpm ci` runs.
+- The gate is offline by design: `src/config.ts` ships Hideki defaults, and suites reach only a mocked fetch or a loopback server they spawn themselves. It needs no `.env`, no key and no indexer, so a venue hiccup can never turn it red.
+- `src/test-reach.test.ts` is in the gate and fails it if a test file stops being reachable from a `test:*` script, if a pattern matches nothing, or if a `test:*` script stops being named by `gate`. A new suite is only run once it is added to `gate`.
+- `.github/workflows/ci.yml` runs that same `pnpm gate` on every push and pull request, plus a second job (`live`) that runs `probe:markets`, `preflight` and `backtest` read-only against Somnia Hideki 50383 on a schedule, on `main`, and by hand. It holds no credential and signs nothing. The YAML is hand-checked, not parser-verified, and is inert until it reaches the remote.
 - The engine suite pins the chain's average-entry and floor-division semantics with real values, replays the committed BTC 14-day fixture bit for bit, and checks that the loop's books balance.
 - The web suite covers request parsing (legacy path unchanged, new fields, rejections), and the analytics suite covers the metric edge cases.
 - Browser harnesses (local, not part of the repo) exercise the empty state, loading, a live run, error/retry with a 429, JSON export, the model panel, window switching, tabs, invariants, run comparison and mobile layout with no console errors.
