@@ -63,7 +63,7 @@ export function runFailure(error: unknown, response?: { status: number; body: un
     const body = record(response.body) ? response.body : {};
     const serverMessage = typeof body.error === 'string' ? body.error : null;
     const raw = typeof body.detail === 'string' ? body.detail : null;
-    if (response.status === 429) return { message: 'The lab is already running a heavy request.', hint: 'Wait for it to finish, then retry.', raw };
+    if (response.status === 429) return { message: serverMessage ?? 'The lab is running other heavy work right now.', hint: 'Nothing was started for you. Wait a couple of seconds and run it again.', raw };
     if (response.status === 503) return { message: serverMessage ?? 'The backtest service is unavailable.', hint: 'The failure is on the lab machine, not in your inputs.', raw };
     if (response.status === 422) return { message: serverMessage ?? 'The backtest service could not process the run.', hint: 'Retry once; if it repeats, check the server console.', raw };
     if (response.status >= 500) return { message: 'The backtest service hit an internal error.', hint: 'Retry once; if it repeats, check the server console.', raw: raw ?? serverMessage };

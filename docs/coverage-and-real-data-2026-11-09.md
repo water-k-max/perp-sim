@@ -209,6 +209,85 @@ Ranked by how much they change what you can claim out loud.
    ([src/bin/web.ts](../src/bin/web.ts)). A 44-second run observed earlier in this session blocks
    every other request, with no queue, no position, no progress stream and no cancel. For a demo that
    is a stall; for a tool two people are using at once it is a hang.
+   **Fixed: the lock is gone, replaced by keyed lanes, and the routes had to change shape to make
+   that honest.** `SingleFlight` is deleted from [src/bin/http-kit.ts](../src/bin/http-kit.ts) with
+   no compatibility shim; [src/bin/work-lanes.ts](../src/bin/work-lanes.ts) is the replacement —
+   bounded concurrency, identical-request coalescing, a FIFO queue, and a `LaneBusy` refusal that
+   carries the depth it saw so the router can answer 429 with a `Retry-After`. Two lanes, four
+   waiting ([src/bin/web.ts:53](../src/bin/web.ts#L53)). The four things that had to change in the
+   routes, in order of how much they hurt to get wrong:
+
+   - **Validation now happens before admission.** The old `tryAcquire()` sat *above* the body read
+     on all three POST routes (`git show 02b2ba2:src/bin/web.ts`, lines 45/48, 78/81, 104/107), so a
+     request that was about to be rejected for a malformed body still took the only slot while it
+     was being turned away. The GET routes already validated their URL parameters first, which is
+     why they are unchanged in that respect. Each heavy route now parses its own body to completion
+     and answers its own 400 before a lane is asked for. `parseRunRequest` and `parseImport` were
+     already called at the top of their handlers, so what they gained is only the position; the
+     resample options were the real move — `parseResampleRequest` is now called in the router
+     ([src/bin/web.ts:138](../src/bin/web.ts#L138)) as well as inside `resampleStoredRun`, so a path
+     count outside the work budget is a 400 from the router instead of a job that fails.
+   - **The key is the parsed request, not the bytes.** `laneKey` is `route:sha256(canonical(parsed))`
+     ([src/bin/web.ts:58](../src/bin/web.ts#L58)), reusing the same `canonical`/`sha256` that give run
+     digests. So JSON key order, whitespace, and an omitted field against its documented default all
+     identify one job — which is the difference between "coalesces when nobody touched the form" and
+     coalescing at all.
+   - **Response writing moved out of the shared work.** A job returns an `Answer` (`{status, body}`)
+     and each caller writes its own socket (`viaLane`,
+     [src/bin/web.ts:68](../src/bin/web.ts#L68)). This is not a style preference: the second caller of
+     a coalesced pair never runs the work, so a job that wrote straight into the socket that happened
+     to start it would leave the other client connected and silent forever. The refusal path returns
+     `false` from `viaLane` for the same reason — one writer per response.
+   - **There is deliberately no timeout on a queued request.** Dropping a waiter while its job keeps
+     running would let a second copy of the same expensive replay start behind it, which is the
+     failure coalescing exists to prevent; the queue limit is what bounds the wait, and `Retry-After:
+     2` is a floor, not an estimate — the lanes keep no timing history and do not pretend to.
+
+   Evidence. `src/bin/work-lanes.test.ts` (10 tests, 950 ms) pins the policy against deferred
+   promises with no clock, no RNG and no network: one job per key however many callers, keys that
+   differ in one field are different work, peak in-flight never exceeds the limit, the queue drains
+   in FIFO order, a full queue refuses and reports its depth, `queueLimit: 0` means no waiting, a
+   throwing job reaches *every* waiter with the same error and the lane still recovers afterwards,
+   and an empty key is refused before anything is scheduled.
+   `src/backtest-repro.test.ts:205-274` then pins the *wiring* against a real spawned server (ports
+   3199-3201, loopback, `fetch` mocked in-process so a frozen replay cannot reach the chain): eight
+   distinct-seed resamples of a 600 × 500 job yield only 200s and 429s, never more than six 200s,
+   and each 429 carries `Retry-After: 2` with `queue: { concurrency: 2, queueLimit: 4 }` and the
+   sentence the client shows (60.1 s); eight byte-identical resamples all return 200 with **one**
+   distinct body in 11.0 s, which is the coalescing as data rather than as a description; and with
+   the lane demonstrably full — the check races the first response and requires it to be a refusal,
+   so that assertion cannot pass vacuously — three bad requests (a digest that is not one, a body
+   that is not JSON, a path count outside the budget) come back 400, 415, 400 and never 429 (38.5 s).
+
+   And against the live chain, which is the shape the wallet panel actually uses. Five concurrent
+   read-only requests for `0x6e12c589…60691f` (40 perp fills over 7 d) on port 3111: one
+   `/reconcile`, two `/resample` with different seeds, and two byte-identical copies of the first.
+   **Five 200s, zero refusals** — under the lock this exact call would have answered four of them
+   with "a replay is already running". The reconcile took 9.0 s, the resample 7.8 s, its two
+   identical copies came back *at the same instant with the same 7,800 bytes* (coalescing, visible
+   from outside as latency and identity), and the second seed, which had to wait for a lane, landed
+   at 32.6 s with a different body. Nothing was cancelled, nothing was refused, and the server was
+   still alive at the end.
+
+   **What this does not buy, measured rather than assumed.** Two lanes do *not* run two path
+   simulations in parallel: path stepping is synchronous CPU on one thread. Calling the service
+   directly with the same 600 × 500 job, one run alone took **12.2 s**, two started together
+   **30.5 s** (2.49× one, so slightly *worse* in total than serialising would have been), three
+   **43.2 s** (3.54×). The lanes are kept for the routes that made this gap a complaint — account
+   reconcile, account resample and forward test are indexer-bound, and their wall clock is network
+   waits that genuinely overlap — and for the queue and the coalescing, which are pure wins. Worker
+   threads for the CPU-bound path loop remain the open half of the review's upgrade direction, and
+   with them cancel, a progress stream, and a queue position told to the client that is waiting.
+   None of those three exist; a queued request learns nothing until its answer arrives. The lanes are
+   per-process state, so they bound one server, not a fleet.
+
+   A structural fix this work exposed on the way: `test:web` was a hand-written list of files and had
+   silently skipped the new `src/bin/work-lanes.test.ts`, so the ten tests above were green in my
+   terminal and invisible to the repo. It is now `tsx --test src/bin/*.test.ts` plus the rest, so a
+   test in `src/bin/` can no longer be written and never run. The wider form of that problem — no
+   gate that every `*.test.ts` in the repository is reachable from some script — belongs to the CI
+   item.
+
 10. **C5's horizon is one mark wide by construction.** Settlement is hourly
     (`fundingIntervalSec 3600`, measured on the live config), and the markout is the *first settlement
     bar at or after `t + 1 h`* ([src/resample/analysis.ts](../src/resample/analysis.ts)), so "1 h

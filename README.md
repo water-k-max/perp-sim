@@ -52,7 +52,9 @@ Open `http://localhost:3000` for the NOVA Protocol Backtest Lab.
 - A permanent **MODELLED FILL** badge when the tape model is used, and **NO FILL** when an entry never traded.
 - A run comparison list kept in browser storage, and a JSON export of the full response.
 
-The server binds to local loopback, accepts one replay at a time, caps request bodies and lookbacks, sets security headers and serves only frontend assets plus the read-only API. It never serves `.env` or cache files. This is a local research interface, not a hardened public deployment. No wallet connection or transaction execution is included.
+The server binds to local loopback, caps request bodies and lookbacks, sets security headers and serves only frontend assets plus the read-only API. It never serves `.env` or cache files. This is a local research interface, not a hardened public deployment. No wallet connection or transaction execution is included.
+
+Heavy work runs on two lanes with a four-place queue (`src/bin/work-lanes.ts`). A request whose exact job is already in flight joins that job instead of starting a copy, so eight tabs asking for the same analysis cost one read and eight answers; requests past the two lanes wait in arrival order; only a request that finds the queue full is refused, with a `Retry-After` and the depth the server saw. A request the router can reject — a malformed run digest, a non-JSON body, a path count outside the work budget — is answered before a lane is asked for, so it cannot spend a slot or push somebody else's job past the limit. The lanes overlap the indexer-bound reads, which is what a wallet panel and an unrelated backtest need; they do not parallelise path simulation, which is single-threaded CPU — measured on the 600-path × 500-trade resample, one job alone takes 12.2 s and two started together 30.5 s, so the queue is what turns a busy server into a delay rather than a second machine.
 
 The NOVA artwork is supplied by the project owner in `public/nova-storyboard.png`.
 

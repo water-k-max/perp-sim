@@ -13,6 +13,10 @@ import type { TapeSlice } from "./data/tape.js";
 
 const root = await mkdtemp(join(tmpdir(), "perp-replay-test-"));
 process.env.PERP_SIM_CACHE = root;
+// Some tests below forbid the in-process network to prove a frozen replay needs none of it. These
+// HTTP checks talk to a server they spawned, from this process, so they need the fetch that existed
+// before any mock was installed on it.
+const http = globalThis.fetch;
 const { replayPrepared, persistReplay, replaySavedRun } = await import("./backtest-api.js");
 const { hashMarketData } = await import("./data/ingest.js");
 const { createFrozenTapeSource } = await import("./data/tape.js");
@@ -161,4 +165,110 @@ test("malformed account URLs and cross-site browser requests never kill the serv
     server.kill();
     await exited;
   }
+});
+
+/**
+ *  The lane over real HTTP, against a saved run so nothing here touches the network.
+ *
+ *  The scheduler's own arithmetic — one job per key, FIFO within the queue, the exact depth a
+ *  refusal reports — is pinned in `src/bin/work-lanes.test.ts`. What these three checks add is the
+ *  wiring: that a route's key really comes from the validated request, that a refusal reaches the
+ *  client as a 429 with a `Retry-After`, and that a request which was never going to run cannot
+ *  occupy a slot. The job itself is deliberately sized in the middle of the work budget (600 paths ×
+ *  500 trades plus the fan summary) so it lasts comfortably longer than the millisecond window the
+ *  concurrent arrivals take to land — the assertions below are written as bounds (`at least one`)
+ *  rather than an exact split, because the exact split is a race the server can legitimately win.
+ */
+async function withLaneServer(runId: string, port: number, body: Record<string, unknown>, use: (post: (over?: Record<string, unknown>) => Promise<Response>, base: string) => Promise<void>): Promise<void> {
+  const cwd = new URL("../", import.meta.url);
+  const server = spawn(process.execPath, ["--import", "tsx", "src/bin/web.ts"], { cwd, env: { ...process.env, PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await Promise.race([
+      once(server.stdout, "data"),
+      once(server, "exit").then(([code]) => { throw new Error(`Server exited before listening: ${code}`); }),
+    ]);
+    const endpoint = `http://127.0.0.1:${port}`;
+    const post = (over: Record<string, unknown> = {}) => http(`${endpoint}/api/resample`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId, resample: { ...body, ...over } }),
+    });
+    await use(post, endpoint);
+    assert.equal(server.exitCode, null, "the server died while its lane was working");
+  } finally {
+    const exited = once(server, "exit");
+    server.kill();
+    await exited;
+  }
+}
+
+test("a full lane refuses the overflow with a Retry-After, and answers everyone else", async t => {
+  t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
+  const saved = await persistReplay(await replayPrepared(input, cfg, dataset()), input);
+  const heavy = { paths: 600, mode: "bootstrap_with_replacement", horizonTrades: 500 };
+  await withLaneServer(saved.manifest.runId, 3199, heavy, async (post) => {
+    // Eight distinct seeds: two slots plus a queue of four means at most six may be admitted, so
+    // something must be refused, and nothing may be refused twice.
+    const responses = await Promise.all(Array.from({ length: 8 }, (_, i) => post({ seed: `lane-${i}` })));
+    const statuses = responses.map(r => r.status);
+    assert.equal(statuses.filter(s => s === 200).length <= 6, true, `more than concurrency+queue were admitted: ${statuses.join(",")}`);
+    assert.equal(statuses.filter(s => s !== 200 && s !== 429).length, 0, `unexpected status in ${statuses.join(",")}`);
+    const refused = responses.filter(r => r.status === 429);
+    assert.ok(refused.length >= 1, `a full lane answered every request: ${statuses.join(",")}`);
+    for (const response of refused) {
+      assert.equal(response.headers.get("retry-after"), "2", "the refusal carried no Retry-After");
+      const body = await response.json() as { error: string; queue: Record<string, number> };
+      assert.equal(body.queue.concurrency, 2);
+      assert.equal(body.queue.queueLimit, 4);
+      assert.match(body.error, /Try again in 2 seconds/);
+      assert.ok(body.queue.running <= 2 && body.queue.waiting <= 4, `refusal reported an impossible depth: ${JSON.stringify(body.queue)}`);
+    }
+    for (const response of responses.filter(r => r.status === 200)) {
+      const body = await response.json() as { resample?: unknown };
+      assert.ok(body.resample, "an admitted request did not get a resample block");
+    }
+  });
+});
+
+test("the same request from two tabs is one job, not eight refusals", async t => {
+  t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
+  const saved = await persistReplay(await replayPrepared(input, cfg, dataset()), input);
+  const heavy = { paths: 600, mode: "bootstrap_with_replacement", horizonTrades: 500, seed: "identical" };
+  await withLaneServer(saved.manifest.runId, 3200, heavy, async (post) => {
+    // Identical bodies, so identical keys: the whole point is that nobody is refused here, however
+    // many tabs open the same analysis. Anything other than 200 means the key missed.
+    const responses = await Promise.all(Array.from({ length: 8 }, () => post()));
+    const statuses = responses.map(r => r.status);
+    assert.deepEqual(statuses, statuses.map(() => 200), `an identical request was refused: ${statuses.join(",")}`);
+    const bodies = await Promise.all(responses.map(r => r.text()));
+    assert.equal(new Set(bodies).size, 1, "eight copies of one request got eight different answers");
+  });
+});
+
+test("a request the router can reject never costs a lane, even a full one", async t => {
+  t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
+  const saved = await persistReplay(await replayPrepared(input, cfg, dataset()), input);
+  const heavy = { paths: 600, mode: "bootstrap_with_replacement", horizonTrades: 500 };
+  await withLaneServer(saved.manifest.runId, 3201, heavy, async (post, base) => {
+    const issued = Array.from({ length: 8 }, (_, i) => post({ seed: `busy-${i}` }));
+    // Refusals come back the instant the lane is at capacity; the jobs they refused take seconds. So
+    // whichever response lands first is the evidence that the system was full, and full it stays for
+    // the next few milliseconds.
+    const first = await Promise.race(issued);
+    assert.equal(first.status, 429, "the lane never filled, so this check would prove nothing");
+    const bad = (init: RequestInit) => http(`${base}/api/resample`, init);
+    const rejected = await Promise.all([
+      bad({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId: "nope" }) }),
+      bad({ method: "POST", headers: { "Content-Type": "text/plain" }, body: "{}" }),
+      bad({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId: saved.manifest.runId, resample: { paths: 7 } }) }),
+    ]);
+    // A digest that is not one, a body that is not JSON, a job outside the work budget: each is
+    // answered by the router alone. Any 429 here means a request that would have failed anyway was
+    // queued ahead of, or in place of, work somebody else asked for.
+    assert.deepEqual(rejected.map((response) => response.status), [400, 415, 400], "a rejected request was queued or refused instead of answered");
+    for (const response of rejected) await response.text();
+    const settled = await Promise.all(issued);
+    assert.equal(settled.filter((response) => response.status === 200).length >= 1, true, "a full lane still has to answer somebody");
+    for (const response of settled) await response.text();
+  });
 });

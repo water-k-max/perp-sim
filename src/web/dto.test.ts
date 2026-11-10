@@ -10,7 +10,12 @@ test("runFailure maps service, input, network and timeout failures to human copy
   const input = runFailure(null, { status: 400, body: { error: "Lookback must be 1–90 whole days." } });
   assert.equal(input.message, "Lookback must be 1–90 whole days.");
   assert.equal(input.raw, null);
-  assert.match(runFailure(null, { status: 429, body: { error: "busy" } }).message, /already running/);
+  // A refusal carries the depth the lane was at, and that sentence is what the user should see;
+  // the generic copy is only the fallback for a 429 with no message.
+  const busy = runFailure(null, { status: 429, body: { error: "The lab is running 2 heavy job(s) with 4 waiting. Try again in 2 seconds." } });
+  assert.equal(busy.message, "The lab is running 2 heavy job(s) with 4 waiting. Try again in 2 seconds.");
+  assert.match(busy.hint, /Nothing was started/);
+  assert.match(runFailure(null, { status: 429, body: {} }).message, /running other heavy work/);
   const unprocessable = runFailure(null, { status: 422, body: { error: "Data service unavailable. Retry." } });
   assert.equal(unprocessable.message, "Data service unavailable. Retry.");
   assert.match(unprocessable.hint, /server console/);

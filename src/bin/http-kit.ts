@@ -71,18 +71,3 @@ export async function readJson(req: IncomingMessage, maxBytes: number): Promise<
 }
 
 export class BodyTooLarge extends Error {}
-
-/** One expensive replay at a time, so a busy page cannot stack indexer reads. */
-export class SingleFlight {
-  private running = false;
-
-  tryAcquire(): boolean {
-    if (this.running) return false;
-    this.running = true;
-    return true;
-  }
-
-  release(): void {
-    this.running = false;
-  }
-}
