@@ -195,6 +195,18 @@ Ranked by how much they change what you can claim out loud.
    `smk.somnia` across every `*.test.ts` returns nothing. The ground-truth reconciler — the most
    valuable object in this repo — has never been gated against the chain. **It did pass live today**,
    manually, and I have the numbers (A.4) — but "passed once, by hand, today" is not a gate.
+   **Fixed on the read path (2026-11-10): job `live` in `.github/workflows/ci.yml`.** It runs
+   `probe:markets`, `preflight` and `backtest --days 7` against Somnia Hideki 50383 on a nightly
+   schedule, on every push to `main`, and by hand, with the chain id and both endpoints pinned in the
+   job's env so a changed default in `src/config.ts` cannot quietly repoint it at another network.
+   `backtest` is the whole read path over real settlement and candle history with the invariants
+   checked on top of what it computes; it exits 1 on a read failure and 2 on an invariant breach, so
+   both are red without a human in the loop. It holds no credential — every call it makes is a read.
+   **What is still not gated live:** `replay-account` itself. It needs an account argument
+   (`--account 0x…`), and no real Hideki address is committed in this repo, so pinning the nightly's
+   probe account is a decision for the user rather than a default I can set. And the workflow is
+   hand-checked YAML — no YAML parser is installed here — and it does not run at all until the branch
+   reaches the remote.
 7. **`/api/forward` is orphaned.** It is registered at
    [src/bin/web.ts:158](../src/bin/web.ts) and appears nowhere else in the repository; there is no
    caller in `src/web/`. The forward-test code and its tests exist, but the product never runs it, so
@@ -355,8 +367,11 @@ Ranked by how much they change what you can claim out loud.
    silently skipped the new `src/bin/work-lanes.test.ts`, so the ten tests above were green in my
    terminal and invisible to the repo. It is now `tsx --test src/bin/*.test.ts` plus the rest, so a
    test in `src/bin/` can no longer be written and never run. The wider form of that problem — no
-   gate that every `*.test.ts` in the repository is reachable from some script — belongs to the CI
-   item.
+   gate that every `*.test.ts` in the repository is reachable from some script — is now closed by
+   `src/test-reach.test.ts`, which walks `src/`, derives a pattern from every `test:*` script in
+   `package.json`, and fails if a file is unreachable, a pattern matches nothing, or a suite has
+   dropped out of the aggregate `gate`. Measured over 48 test files and 10 scripts; it also refuses
+   to pass on an empty inventory, so it cannot go green by finding nothing.
 
 10. **C5's horizon is one mark wide by construction.** Settlement is hourly
     (`fundingIntervalSec 3600`, measured on the live config), and the markout is the *first settlement
