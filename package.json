@@ -27,6 +27,7 @@
     "test:resample": "tsx --test src/resample/*.test.ts",
     "test:calibration": "tsx --test src/resample/calibration.test.ts",
     "test:verify": "tsx --test src/verify/*.test.ts",
+    "test:guards": "bash test/guard-injections.sh",
     "typecheck": "tsc --noEmit && pnpm typecheck:web"
   },
   "dependencies": {

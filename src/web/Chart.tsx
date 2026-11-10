@@ -3,7 +3,7 @@ import { amount, date, number, type Result } from './dto.js';
 import { axisTicks } from './fan.js';
 
 /** Index of the sample closest in time to `t`. `points` must be sorted by `t`. */
-function nearestSample(points: readonly { t: number }[], t: number): number {
+export function nearestSample(points: readonly { t: number }[], t: number): number {
   let lo = 0;
   let hi = points.length - 1;
   while (lo < hi) {
@@ -12,6 +12,17 @@ function nearestSample(points: readonly { t: number }[], t: number): number {
     else hi = mid;
   }
   return lo > 0 && Math.abs(points[lo]!.t - t) > Math.abs(points[lo - 1]!.t - t) ? lo - 1 : lo;
+}
+
+/**
+ *  What the pointer readout may claim. A cursor that has not moved, or that sits past the end of
+ *  the trail, names no sample and no number of closes — the rest state has to be silent, because
+ *  "0 trades closed here" over a bar nobody hovered is a fact the run never established.
+ */
+export function cursorReadout(cursor: number | null, points: readonly { t: number; equity: string }[], closes: ReadonlyMap<number, number>): { point: { t: number; equity: string } | null; closed: number } {
+  const point = cursor === null ? null : points[cursor] ?? null;
+  const closed = point === null || cursor === null ? 0 : closes.get(cursor) ?? 0;
+  return { point, closed };
 }
 
 export function Chart({ data }: { data: Result | null }) {
@@ -63,8 +74,7 @@ export function Chart({ data }: { data: Result | null }) {
   const last = points[points.length - 1];
   const shortDate = (t: number) => new Date(t * 1000).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric' });
   const clampX = useCallback((value: number) => Math.min(right, Math.max(left, value)), [left, right]);
-  const at = cursor === null ? null : points[cursor] ?? null;
-  const shown = cursor === null ? 0 : closes.get(cursor) ?? 0;
+  const { point: at, closed: shown } = cursorReadout(cursor, points, closes);
   // Built once per geometry, not per pointer move: a busy run closes hundreds of trades.
   const markers = useMemo(() => trades.map((trade, i) => {
     const px = clampX(x(Number(trade.t)));

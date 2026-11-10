@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chainLabel, fetchChain, parseChainReport, runFailure, validateResample, validateResponse, type ChainReport, type ResampleBlock } from "./dto.js";
+import { chainLabel, changedLabels, describeModel, fetchChain, parseChainReport, runBadge, runFailure, validateResample, validateResponse, type ChainReport, type ResampleBlock } from "./dto.js";
 
 const hidekiReport: ChainReport = {
   name: "Hideki Testnet", readChainId: "50383", manifestChainId: "50383",
@@ -203,4 +203,51 @@ test("fetchChain asks the server, and a read that fails is no report at all", as
   assert.equal(await fetchChain(), null, "a half report is not a report");
   reply = async () => { throw new Error("offline"); };
   assert.equal(chainLabel(await fetchChain()), "Chain unknown");
+});
+
+/** A finished run exactly as the wire sends it, so every consumer below gets it through the real validator. */
+const wireRun = (overrides: Record<string, unknown> = {}) => validateResponse({
+  market: "ETH-USDso", quoteSymbol: "USDso", side: "long", size: "1", cash: "1000", entryPrice: "2000",
+  from: 1_700_000_000, to: 1_700_100_000, status: "closed", equityEnd: "1000", pnl: "0", funding: "0", fees: "0",
+  maxDrawdownPct: "0", coverage: { bars: 2 }, complete: true, trail: [{ t: 1_700_000_000, equity: "1000" }], warnings: [],
+  ...overrides,
+});
+
+test("runBadge refuses to call an unopened position a complete run", () => {
+  const rejectedEntry = [{ id: "o1", tag: "entry", status: "rejected" }];
+  assert.equal(runBadge(wireRun({ orders: rejectedEntry, fills: [] })), "NO FILL");
+  // Nothing about the rejection changes once something actually filled: the position exists.
+  assert.equal(runBadge(wireRun({ orders: rejectedEntry, fills: [{ id: "f1" }] })), "RUN COMPLETE");
+  // And a rejection that is not the entry order says nothing about whether the position opened.
+  assert.equal(runBadge(wireRun({ orders: [{ id: "o2", tag: "exit", status: "rejected" }], fills: [] })), "RUN COMPLETE");
+  assert.equal(runBadge(wireRun({ orders: [{ id: "o3", tag: "entry", status: "open" }], fills: [] })), "RUN COMPLETE");
+  assert.equal(runBadge(wireRun({ orders: [], fills: [] })), "RUN COMPLETE", "a run with no orders reported is not a rejected one");
+  // The other two headline only the completeness flag, and NO FILL outranks PARTIAL.
+  assert.equal(runBadge(wireRun({ complete: false })), "PARTIAL RESULT");
+  assert.equal(runBadge(wireRun({ complete: false, orders: rejectedEntry, fills: [] })), "NO FILL");
+});
+
+test("changedLabels names only the watched inputs that moved, in watch-list order", () => {
+  const inputs = { size: "Size", side: "Side", days: "Lookback" };
+  const ranWith = { size: "1", side: "long", days: 7 };
+  assert.deepEqual(changedLabels(ranWith, ranWith, inputs), [], "the same inputs are not stale");
+  assert.deepEqual(changedLabels({ ...ranWith, size: "2" }, ranWith, inputs), ["Size"]);
+  assert.deepEqual(changedLabels({ size: "2", side: "short", days: 30 }, ranWith, inputs), ["Size", "Side", "Lookback"]);
+  // With no recorded inputs there is nothing to compare against, so nothing may be called stale.
+  assert.deepEqual(changedLabels({ size: "2", side: "short", days: 30 }, null, inputs), []);
+  // A key outside the watch-list is invisible even when it moved — the list is the contract.
+  assert.deepEqual(changedLabels({ ...ranWith, quote: "USDC" }, { ...ranWith, quote: "USDso" }, inputs), []);
+  // Equality is `!==` on flat primitives, so a value that changed type counts as a change.
+  assert.deepEqual(changedLabels({ days: 7 as unknown }, { days: "7" as unknown }, { days: "Lookback" }), ["Lookback"]);
+});
+
+test("describeModel tells the two fill models apart and admits neither is an execution", () => {
+  const tape = describeModel({ fillModel: "tape", profile: "optimistic", latencySec: 2, windowSec: 30, gasPerTx: "0", requiresFills: true });
+  assert.match(tape, /30s window opening 2s after the decision/);
+  assert.match(tape, /optimistic profile/);
+  assert.match(tape, /not an executed order/i);
+  const mark = describeModel({ fillModel: "settlement-mark", profile: "conservative", latencySec: 0, windowSec: null, gasPerTx: "0", requiresFills: false });
+  assert.match(mark, /next settlement mark/);
+  assert.match(mark, /not a book fill/i);
+  assert.equal(tape === mark, false, "one sentence for two different models would misreport the run");
 });

@@ -118,6 +118,17 @@ export function runFailure(error: unknown, response?: { status: number; body: un
   if (error instanceof TypeError) return { message: 'Cannot reach the backtest service.', hint: 'Check that the local lab server is running, then retry.', raw: null };
   return { message: error instanceof Error ? error.message : String(error), hint: 'Retry; if it repeats, reload the page so it matches the server build.', raw: null };
 }
+
+/**
+ *  The headline a finished response earns. A rejected entry order with nothing filled is
+ *  not a "complete run" — saying RUN COMPLETE over an empty position is the loudest lie this
+ *  screen could tell — and an incomplete read is not a complete one either.
+ */
+export function runBadge(result: Result): 'NO FILL' | 'RUN COMPLETE' | 'PARTIAL RESULT' {
+  const rejectedEntry = (result.orders || []).some(o => o.status === 'rejected' && o.tag === 'entry');
+  if (rejectedEntry && (result.fills || []).length === 0) return 'NO FILL';
+  return result.complete ? 'RUN COMPLETE' : 'PARTIAL RESULT';
+}
 const timestamp = (t: unknown): t is number => typeof t === 'number' && Number.isFinite(t) && !Number.isNaN(new Date(t * 1000).getTime());
 
 // Validate the wire response before it enters UI state. Optional detail DTOs mirror the API.

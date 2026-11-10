@@ -130,6 +130,10 @@ pnpm typecheck
 pnpm test:units && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:verify && pnpm test:runs && pnpm test:web
 ```
 
+`pnpm test:guards` is the mutation harness for the `src/web` render guards: it injects each bug a
+guard claims to catch and requires the named test to go red. It re-runs a test file per probe, so it
+costs minutes and is not in the gate — run it whenever a guard in `src/web` is added or edited.
+
 Add `pnpm test:resample` (`tsx --test src/resample/*.test.ts`) at Phase 1 and add it to the
 gate. `src/verify/invariants.ts` gains: `resample-deterministic` (re-run same seed ⇒ equal
 hash; error level), `resample-bounds` (probabilities in [0,1], CVaR ≤ VaR, percentile

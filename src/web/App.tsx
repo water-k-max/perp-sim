@@ -4,7 +4,7 @@ import { WalletPanel } from './Wallet.js';
 import { ImportTradesPanel } from './ImportTrades.js';
 import { Results } from './Results.js';
 import { ChainBadge } from './ChainBadge.js';
-import { changedLabels, fetchChain, runFailure, validateResponse, type ChainReport, type RequestDTO, type Result, type RunFailure } from './dto.js';
+import { changedLabels, fetchChain, runBadge, runFailure, validateResponse, type ChainReport, type RequestDTO, type Result, type RunFailure } from './dto.js';
 import { clearHistory, rememberRun, type HistoryEntry } from './history.js';
 
 class HttpFailure extends Error {
@@ -62,8 +62,7 @@ export function App() {
       if (!response.ok) throw new HttpFailure(response.status, data);
       const next = validateResponse(data);
       setResult(next); setHistory(rememberRun(next)); setExportReady(true); setRanWith(fields);
-      const noFill = (next.orders || []).some(o => o.status === 'rejected' && o.tag === 'entry') && (next.fills || []).length === 0;
-      setBadge(noFill ? 'NO FILL' : next.complete ? 'RUN COMPLETE' : 'PARTIAL RESULT');
+      setBadge(runBadge(next));
       setActivity(next.complete ? 'Done.' : 'Partial result. Check data coverage.');
       if (window.matchMedia('(max-width: 650px)').matches) navigateSetup(false);
     } catch (error) {

@@ -225,6 +225,50 @@ Ranked by how much they change what you can claim out loud.
    `fan.test.ts`. Every design change from this sprint — the failure banner, the sticky chart,
    contrast, hit targets, the cursor readout, the Stat notes — is verified by hand in the browser,
    which is how I verified it, but is not regression protection.
+   **Fixed, and it needed three structural changes to do it.** 30 tests added across
+   [src/web/results-states.test.tsx](../src/web/results-states.test.tsx) (14),
+   [src/web/resample-states.test.tsx](../src/web/resample-states.test.tsx) (11),
+   [src/web/chart.test.tsx](../src/web/chart.test.tsx) (2) and three in `dto.test.ts`; `src/web/`
+   is now 7 files / 52 tests, `pnpm test:web` 87, no new dependency. The seam is
+   `renderToStaticMarkup`, and three things about it decided the design.
+   *Effects never run.* `useEffect`, `useLayoutEffect`, `ResizeObserver` and `fetch` bodies are
+   dead code under SSR, so anything living in one either moved or stayed untested — see the list
+   below. Hook-bearing components (`Results`, `ResamplePanel`, `Chart`) must be rendered as JSX,
+   never called, or React throws "Invalid hook call".
+   *A hand-typed fixture tests nothing.* `Result` is derived from the server's own return type, so
+   a literal would keep compiling after the wire changed shape — which is how a fixture-built rung
+   record can stay green through a server drift. Every render fixture here is wire JSON pushed
+   through the real `validateResponse` / `validateResample`, and the interesting ones are built by
+   the modules that publish them: `markoutLadder` → `markoutView` → validator → card, and
+   `buildResampleAnalysis` → `checkResample` → validator → panel. (The second hop is not optional:
+   `buildResampleAnalysis` alone emits no `invariants` key and `validateResample` rejects that —
+   mounting invariants is the API's job — so a fixture skipping it described an object the server
+   cannot send.)
+   *Two decisions had to leave the component to be testable at all.* `runBadge`
+   ([src/web/dto.ts:127](../src/web/dto.ts)) is the headline rule lifted out of `App.tsx`, so the
+   loudest lie this screen can tell — `RUN COMPLETE` over a position that never opened — is a pure
+   function with a direct test. `cursorReadout`
+   ([src/web/Chart.tsx:22](../src/web/Chart.tsx)) and `nearestSample` (same file, `:6`) are the
+   hover readout's two decisions pulled out of `Chart`'s `useState`; SSR can render the rest state
+   but can never move a pointer, so the branch that names a sample was unobservable from inside the
+   component. `App.tsx` now calls `runBadge`; `pnpm typecheck` is what proves those extractions are
+   behaviour-preserving.
+   **The guards are proven non-vacuous, not merely green.** `pnpm test:guards`
+   ([test/guard-injections.sh](../test/guard-injections.sh)) injects the exact bug each render guard
+   claims to catch — one at a time, byte-restored from a copy, never through git — and requires the
+   *named* test to go red; any other outcome (`MISSED` / `BROKEN` / `NO-PATCH` / `OTHER`) fails the
+   run, because a probe whose patch never applied, or whose file failed to compile so no test ran,
+   was testing nothing. 48 injections, 48 caught. It found two things worth recording: `FanChart`'s
+   own empty-fan guard is unreachable through the panel (a zero-trade run carries no distribution,
+   so `{dist && …}` never mounts it) — now covered by rendering `FanChart` directly with one empty
+   and one real band — and the resample panel sits behind two independent gates, so its negative arm
+   needs both removed before anything false reaches the screen.
+   **Still hand-checked, therefore still unprotected:** the sticky chart's height and offset, all
+   stylesheet contrast and hit-target sizes, focus rings and keyboard traversal of the tablist, the
+   hover interaction itself (only its decision function is tested), `ChainBadge`'s mount-time fetch
+   and `Chart`'s `ResizeObserver` width, and the fact that `App` wires `runBadge` into the badge at
+   all. Those need a real browser; the manual passes that covered them this sprint are a record of
+   verification, not regression protection.
 9. **The whole app serialises behind one lock.** `SingleFlight` guards `/api/backtest`,
    `/api/resample`, `/api/trades/resample`, `/api/forward`, and both account endpoints
    ([src/bin/web.ts](../src/bin/web.ts)). A 44-second run observed earlier in this session blocks
