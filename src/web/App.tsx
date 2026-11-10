@@ -3,7 +3,8 @@ import { Configuration, watchFields, type ConfigFields } from './Configuration.j
 import { WalletPanel } from './Wallet.js';
 import { ImportTradesPanel } from './ImportTrades.js';
 import { Results } from './Results.js';
-import { changedLabels, runFailure, validateResponse, type RequestDTO, type Result, type RunFailure } from './dto.js';
+import { ChainBadge } from './ChainBadge.js';
+import { changedLabels, fetchChain, runFailure, validateResponse, type ChainReport, type RequestDTO, type Result, type RunFailure } from './dto.js';
 import { clearHistory, rememberRun, type HistoryEntry } from './history.js';
 
 class HttpFailure extends Error {
@@ -25,11 +26,17 @@ export function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [setupOpen, setSetupOpen] = useState(true);
   const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 650px)').matches);
+  const [network, setNetwork] = useState<ChainReport | null | undefined>(undefined);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 650px)');
     const update = () => setMobile(query.matches);
     query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    void fetchChain().then((report) => { if (mounted) setNetwork(report); });
+    return () => { mounted = false; };
   }, []);
   function navigateSetup(open: boolean) {
     setSetupOpen(open);
@@ -87,7 +94,7 @@ export function App() {
       <div className="sidebar-footer">NOVA / RESEARCH TOOLS</div>
     </aside>
     <main id="main">
-      <header className="topbar"><div>Research <span>/</span> <strong>Backtest Lab</strong></div><div className="region"><i aria-hidden="true" /> Tokyo <span>Read-only region</span></div></header>
+      <header className="topbar"><div>Research <span>/</span> <strong>Backtest Lab</strong></div><ChainBadge report={network} /></header>
       <section className="hero" aria-labelledby="hero-title">
         <div className="hero-copy"><p className="eyebrow">IDEAS IN. INSIGHT OUT.</p><h1 id="hero-title">Test the idea.<br /><span>Understand the cost.</span></h1><p>Explore a perpetual position through historical markets.<br className="desktop-break" /> See what price, funding, and fees do to the outcome.</p><div className="hero-tags"><span>Historical data</span><span>Transparent assumptions</span></div></div>
         <div className="hero-art" role="img" aria-label="NOVA cyan and violet shield" />

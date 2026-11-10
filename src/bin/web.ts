@@ -1,7 +1,7 @@
 import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { BacktestInputError, BacktestStorageError, listMarkets, parseRunRequest, runRequest } from "../backtest-api.js";
-import { createClient } from "../client.js";
+import { chainReport, createClient } from "../client.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { loadMarketData } from "../data/ingest.js";
 import { canonical, listDatasets, sha256 } from "../data/store.js";
@@ -174,6 +174,10 @@ createServer(async (req, res) => {
     });
     return;
   }
+
+  // Which network this process reads, from the module that builds the client rather than from a
+  // string in a component. No lane and no network: it answers from this process's own config.
+  if (req.method === "GET" && url.pathname === "/api/chain") { json(res, 200, chainReport()); return; }
 
   if (req.method === "GET" && url.pathname === "/api/markets") {
     try { json(res, 200, await listMarkets()); }

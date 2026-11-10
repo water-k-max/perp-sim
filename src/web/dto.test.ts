@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runFailure, validateResample, validateResponse, type ResampleBlock } from "./dto.js";
+import { chainLabel, fetchChain, parseChainReport, runFailure, validateResample, validateResponse, type ChainReport, type ResampleBlock } from "./dto.js";
+
+const hidekiReport: ChainReport = {
+  name: "Hideki Testnet", readChainId: "50383", manifestChainId: "50383",
+  indexerUrl: "https://hideki-dev.smk.somnia.host/v1/graphql", testnet: true, agrees: true,
+};
 
 test("runFailure maps service, input, network and timeout failures to human copy", () => {
   const storage = runFailure(null, { status: 503, body: { error: "Local cache storage is unavailable.", detail: "EPERM: operation not permitted, rename" } });
@@ -165,4 +170,37 @@ test("validateResponse validates an optional resample block on a model result", 
   };
   assert.equal(validateResponse(base).resample?.meta.seed, "s".repeat(64));
   assert.throws(() => validateResponse({ ...base, resample: { nope: true } }), /resample/);
+});
+
+test("parseChainReport takes a chain report only when it says everything", () => {
+  assert.deepEqual(parseChainReport(hidekiReport), hidekiReport);
+  const { testnet: _gone, ...withoutTestnet } = hidekiReport;
+  const bad: unknown[] = [null, undefined, 50383, "Hideki", [], { ...hidekiReport, name: "" }, { ...hidekiReport, readChainId: 50383 },
+    { ...hidekiReport, indexerUrl: "   " }, { ...hidekiReport, agrees: "true" }, withoutTestnet];
+  for (const value of bad) assert.equal(parseChainReport(value), null, `accepted ${JSON.stringify(value) ?? "undefined"}`);
+});
+
+test("chainLabel names the chain in the report, and names both ids when they differ", () => {
+  assert.equal(chainLabel(hidekiReport), "Hideki Testnet · 50383");
+  assert.equal(chainLabel({ ...hidekiReport, agrees: false, manifestChainId: "50321" }), "Chain mismatch · 50383 ≠ 50321");
+  assert.equal(chainLabel(null), "Chain unknown");
+  assert.doesNotMatch(chainLabel(hidekiReport), /tokyo/i, "the label must come from the report, not from a remembered network name");
+});
+
+test("fetchChain asks the server, and a read that fails is no report at all", async t => {
+  const asked: string[] = [];
+  let reply: () => Promise<Response> = async () => new Response(JSON.stringify(hidekiReport), { status: 200 });
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => { asked.push(String(input)); return reply(); });
+
+  assert.equal((await fetchChain())?.manifestChainId, "50383");
+  assert.deepEqual(asked, ["/api/chain"], "the chain must be read from the server that reads it");
+
+  reply = async () => new Response(JSON.stringify({ error: "nope" }), { status: 500 });
+  assert.equal(await fetchChain(), null, "a failed status cannot become a chain name");
+  reply = async () => new Response("{ not json", { status: 200 });
+  assert.equal(await fetchChain(), null, "an unparseable body cannot become a chain name");
+  reply = async () => new Response(JSON.stringify({ name: "Hideki Testnet" }), { status: 200 });
+  assert.equal(await fetchChain(), null, "a half report is not a report");
+  reply = async () => { throw new Error("offline"); };
+  assert.equal(chainLabel(await fetchChain()), "Chain unknown");
 });

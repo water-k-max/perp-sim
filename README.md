@@ -1,6 +1,6 @@
 # perp-sim
 
-A read-only backtester for dreamDEX perpetuals on Somnia Tokyo (Hideki), chain **50383**.
+A read-only backtester for dreamDEX perpetuals on the Somnia Hideki testnet, chain **50383**.
 
 It replays a strategy against the venue's own history — settlement bars, the recorded trade tape, hourly candles and per-epoch parameter changes — and reports equity, signed attribution, risk statistics and a set of mechanical invariants. It does not sign transactions, place orders, move collateral or close positions, and it never needs a private key or a funded wallet.
 
@@ -17,7 +17,7 @@ Any of the indexed perp markets works, over any window the indexer covers (up to
 - **Account reconciliation.** Replays a public account's own fills through the same position book and diffs the result against the indexer's `PerpPositionChange` and `PerpFeeRecord` rows.
 - **Reproducible identity.** Every run carries a `runId`, a `dataVersion` (hash of the dataset), a `configHash` (parameters + model + strategy) and a `codeCommit`, so two runs that disagree can be told apart.
 
-**Status: verified against live Tokyo history.** The committed golden fixture replays 14 days of BTC into 336 settlements with 0 missing settlements and 0 gaps: 1,000 hypothetical USDso end at **946.750111830475226055**, with price PnL −11.54664041438527 and funding paid 41.703247755139503945. The same fixture replayed twice produces the identical event hash. These are historical replay results, not executed trades or profitability guarantees. The live indexer keeps growing, so a rerun over a different window has different coverage and different numbers.
+**Status: verified against live Hideki history.** The committed golden fixture replays 14 days of BTC into 336 settlements with 0 missing settlements and 0 gaps: 1,000 hypothetical USDso end at **946.750111830475226055**, with price PnL −11.54664041438527 and funding paid 41.703247755139503945. The same fixture replayed twice produces the identical event hash. These are historical replay results, not executed trades or profitability guarantees. The live indexer keeps growing, so a rerun over a different window has different coverage and different numbers.
 
 ## Quick start
 
@@ -187,7 +187,9 @@ pnpm test:units && pnpm test:web && pnpm test:engine && pnpm test:data && pnpm t
 
 ## Network and layout
 
-Tokyo/Hideki testnet only, chain 50383; default indexer `https://hideki-dev.smk.somnia.host/v1/graphql`. Do not repoint this workflow at mainnet. Shannon is not the bounty network.
+Hideki testnet only, chain 50383; default indexer `https://hideki-dev.smk.somnia.host/v1/graphql`. Do not repoint this workflow at mainnet. Shannon is not the bounty network.
+
+The chain identity a run belongs to is never a string typed into the interface. `src/client.ts` holds the two ids that exist — the SDK chain object every read goes through, and `CHAIN_ID`, which only labels the datasets this tool writes and caches — and `chainReport()` compares them. `GET /api/chain` serves that report, and the topbar labels itself from it: `Hideki Testnet · 50383` when the two agree, `Chain mismatch · 50383 ≠ 50321` when `CHAIN_ID` has been pointed somewhere else, and `Chain unknown` if the read fails. `src/client.test.ts` pins the mismatch case by running the module with a drifted `CHAIN_ID`.
 
 ```text
 src/history/        market config, settlements, candles and bars

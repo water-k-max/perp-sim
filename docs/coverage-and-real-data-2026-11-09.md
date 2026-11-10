@@ -483,6 +483,59 @@ Everything below is config plus one read path; none of it needs new runtime depe
    code/data identity ([src/runs/manifest.ts:86-104](../src/runs/manifest.ts)). A network switch is only
    trustworthy if the UI says which network produced a number; "Hideki testnet · zero fees" under a PnL
    card is the honest version of today's silent assumption.
+   **Fixed (2026-11-10) — the interface now names the chain it was told about, not the one a component
+   remembered.** The topbar carried the word `Tokyo` as typed markup while every read went to Hideki
+   50383; read live before the change, the header of a page that had just queried Hideki said
+   `Research / Backtest Lab` / `Tokyo`. Fixing that is three structural changes, not a string swap:
+   - **`src/client.ts` is now the only place the two chain identities meet** — and they are genuinely
+     two: `hidekiTestnet.id` is what the SDK client queries against, `config.chainId` (`CHAIN_ID`,
+     default 50383) is what `runs/manifest.ts` stamps into every dataset identity and cache key.
+     Nothing compared them, so `CHAIN_ID=50321` relabelled Hideki data as Tokyo's while every number
+     still came from 50383. `chainReport()` returns both, the indexer URL, `testnet`, and `agrees` —
+     the comparison itself, never a literal.
+   - **A route serves it**: `GET /api/chain` ([src/bin/web.ts:180](../src/bin/web.ts)), no lane and no
+     network, because it answers from the process's own configuration.
+   - **The label is a component that cannot hold a name.**
+     [src/web/ChainBadge.tsx](../src/web/ChainBadge.tsx) renders `Hideki Testnet · 50383` when the
+     report agrees, `Chain mismatch · 50383 ≠ 50321` when it does not, `Checking chain` while the read
+     is in flight and `Chain unknown` if it fails — and the dot takes `--bad` on the last two, so a
+     chain this tool cannot confirm never renders as the healthy cyan. There is deliberately **no
+     fallback network name in the frontend**: a fallback is the bug being fixed. `.env.example` now
+     says what `CHAIN_ID` is for and that it cannot move a read.
+   Evidence. `src/client.test.ts` pins `chain.id === 50383` (reads stay on the hackathon chain) and
+   the report's derivation, then re-runs the module in a child process with `CHAIN_ID=50321` —
+   `readChainId` is still `50383`, `manifestChainId` is `50321`, `agrees` is `false`: the environment
+   can mislabel the data, it cannot move the reads (11.5 s for that one test, because `config.ts`
+   reads its environment at import). `src/web/chain.test.tsx` renders the badge in all four states
+   through `react-dom/server` — already a dependency, so AGENTS.md's no-new-deps rule holds — and
+   searches every render for the word `tokyo`, which is the regression this section is about.
+   `src/web/dto.test.ts` covers the parser (`/api/chain` answers, or nothing does: a half report, a
+   whitespace name, a 500, an unparsable body and an offline throw all come back `null`) and that
+   `fetchChain` asks exactly `/api/chain`; `src/backtest-repro.test.ts` now reads the route over real
+   HTTP on a server it had already spawned. Live: on the drifted server the header read
+   `Chain mismatch · 50383 ≠ 50321 | Reads and labels differ` with `data-state="mismatch"` and dot
+   `rgb(255,143,160)`, and at a 502 px viewport the label is still one line with the header overflow
+   measured at `0` (the qualifier span is `display:none` at 650 px and under, which is the
+   `@media(max-width:650px)` rule already in `public/app.css`); on the default server it reads
+   `Hideki Testnet · 50383` with dot `rgb(96,226,233)` and no `tokyo` anywhere in `body.innerText`.
+   The built bundle has zero case-insensitive `tokyo` hits.
+   One meta-finding came out of running those tests: `tsx --test` transpiles `.tsx` with the *classic*
+   JSX runtime unless it is given a tsconfig whose `include` covers those files, and the root
+   `tsconfig.json` includes `src/**/*.ts` — never `.tsx`. The render test therefore threw
+   `React is not defined` while every other file in the suite passed. `test:web` now runs
+   `tsx --tsconfig ./tsconfig.web.json --test …`, which is also where the `.tsx` UI tests of A.3.8
+   have to live. Same shape as the silently-skipped test file found under A.3.9: a check that never
+   ran looks exactly like a check that passed.
+   The documentation naming followed the measurement rather than the habit: README's "Somnia Tokyo
+   (Hideki)" and "verified against live Tokyo history" are now Hideki, and that second sentence is
+   checkable — the golden fixture's BTC pool `0x4181dd08…941b94c0` answers on `hideki-dev` with
+   parameter epochs *inside the fixture's own window* (`1792227339`, `1792400006`, `1792452183` between
+   `from 1792069570` and `to 1793279170`) and returns **zero rows** on `tokyo-prd`.
+   **What this does not do:** it does not add the network *selector* of item 1. The installed SDK
+   cannot address 50321 without a `defineChain` or the 0.33.0 bump, and per B.1 that stream is 17
+   fills per 60,000 blocks — a selector would offer a choice with nothing behind it. What the label
+   change buys is that when a selector does land, the UI will already have to say which chain produced
+   which number instead of assuming.
 3. **Add a cheap "is there anything here?" preflight before any reconcile.** `countUserFills` +
    `getLatestFillBlock` are two reads and would tell the user up front: window empty, account is a bot
    (count == 10,000 cap → will be truncated at `maxFills 2_000`), or indexer has no perp data. All three

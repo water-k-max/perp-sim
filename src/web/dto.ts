@@ -48,6 +48,49 @@ export function fetchMarkets(): Promise<Market[]> {
   return marketsRead;
 }
 
+/**
+ *  Which network this page is reading, taken from the server that reads it.
+ *
+ *  The topbar used to carry the word `Tokyo` as text typed into a component while every request
+ *  went to Hideki through the SDK chain object in `src/client.ts`. A label that is not asked about
+ *  cannot be wrong only in innocent ways — it is also how a repointed server, or a `CHAIN_ID` that
+ *  disagrees with the client, would go on looking normal. So the label is built from this report or
+ *  says it does not know; there is no fallback chain name in the frontend to be stale.
+ */
+export type ChainReport = {
+  name: string;
+  readChainId: string;
+  manifestChainId: string;
+  indexerUrl: string;
+  testnet: boolean;
+  agrees: boolean;
+};
+
+export function parseChainReport(value: unknown): ChainReport | null {
+  if (!record(value)) return null;
+  const text = ['name', 'readChainId', 'manifestChainId', 'indexerUrl'] as const;
+  if (!text.every(key => typeof value[key] === 'string' && (value[key] as string).trim().length > 0)) return null;
+  if (typeof value.testnet !== 'boolean' || typeof value.agrees !== 'boolean') return null;
+  return { name: value.name, readChainId: value.readChainId, manifestChainId: value.manifestChainId, indexerUrl: value.indexerUrl, testnet: value.testnet, agrees: value.agrees } as ChainReport;
+}
+
+export function chainLabel(report: ChainReport | null): string {
+  if (!report) return 'Chain unknown';
+  if (!report.agrees) return `Chain mismatch · ${report.readChainId} ≠ ${report.manifestChainId}`;
+  return `${report.name} · ${report.readChainId}`;
+}
+
+/** The report, or null. A failed read must not leave a name on screen from an earlier guess. */
+export async function fetchChain(): Promise<ChainReport | null> {
+  try {
+    const response = await fetch('/api/chain', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return null;
+    return parseChainReport(await response.json());
+  } catch {
+    return null;
+  }
+}
+
 export type RunFailure = {
   /** Human headline for the failure state and the form alert. */
   message: string;

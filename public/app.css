@@ -179,3 +179,10 @@ svg#chart:focus-visible{outline-offset:2px}
 .chart-legend .tick{display:inline-block;width:2px;height:9px;margin:0 4px 1px 8px;vertical-align:-1px}
 .chart-legend .tick-win{background:#60e2e9}
 .chart-legend .tick-loss{background:#ff9da9}
+
+/* Chain badge: the dot reports the state of the chain read, so a network the server cannot confirm —
+   or one that disagrees with the id written into the datasets — never renders as the healthy cyan. */
+.region[data-state=mismatch] i,.region[data-state=unknown] i{background:var(--bad)}
+.region[data-state=mismatch]{color:#ffc3cf}
+.region[data-state=pending] i{background:var(--muted);animation:chain-pulse 1.2s ease-in-out infinite}
+@keyframes chain-pulse{50%{opacity:.3}}

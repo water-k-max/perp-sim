@@ -10,6 +10,7 @@ import type { MarketConfig } from "./history/market.js";
 import type { MarketData } from "./data/types.js";
 import type { RunRequest } from "./backtest-api.js";
 import type { TapeSlice } from "./data/tape.js";
+import { parseChainReport } from "./web/dto.js";
 
 const root = await mkdtemp(join(tmpdir(), "perp-replay-test-"));
 process.env.PERP_SIM_CACHE = root;
@@ -206,7 +207,7 @@ test("a full lane refuses the overflow with a Retry-After, and answers everyone 
   t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
   const saved = await persistReplay(await replayPrepared(input, cfg, dataset()), input);
   const heavy = { paths: 600, mode: "bootstrap_with_replacement", horizonTrades: 500 };
-  await withLaneServer(saved.manifest.runId, 3199, heavy, async (post) => {
+  await withLaneServer(saved.manifest.runId, 3199, heavy, async (post, base) => {
     // Eight distinct seeds: two slots plus a queue of four means at most six may be admitted, so
     // something must be refused, and nothing may be refused twice.
     const responses = await Promise.all(Array.from({ length: 8 }, (_, i) => post({ seed: `lane-${i}` })));
@@ -227,6 +228,15 @@ test("a full lane refuses the overflow with a Retry-After, and answers everyone 
       const body = await response.json() as { resample?: unknown };
       assert.ok(body.resample, "an admitted request did not get a resample block");
     }
+    // The chain read rides along on a server that is already running: it answers from the process's
+    // own chain object, takes no lane and no network, and is the only thing the topbar labels itself
+    // with. A response the interface cannot parse would leave it naming a network it never asked.
+    const chainRead = await http(`${base}/api/chain`, { headers: { Accept: "application/json" } });
+    assert.equal(chainRead.status, 200, "the chain read the interface labels itself with is not being served");
+    const report = parseChainReport(await chainRead.json());
+    assert.ok(report, "the chain read came back in a shape the interface cannot label from");
+    assert.equal(report.readChainId, "50383", "the route must name the chain the client actually reads");
+    assert.equal(report.agrees, report.readChainId === report.manifestChainId, "agrees must be the comparison, never a literal");
   });
 });
 

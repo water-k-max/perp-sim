@@ -1,7 +1,7 @@
 # perp-sim — Agent Instructions
 
-Read-only backtester and pre-trade simulator for dreamDEX perps on Somnia Tokyo (Hideki),
-chain 50383, built on the venue SDK's own exported arithmetic. This is the bounty MVP
+Read-only backtester and pre-trade simulator for dreamDEX perps on the Somnia Hideki
+testnet, chain 50383, built on the venue SDK's own exported arithmetic. This is the bounty MVP
 repository. Nothing from the feedback repository (`~/dreamdex-perps-bounty`) belongs here.
 
 ## Prime directive for this upgrade
