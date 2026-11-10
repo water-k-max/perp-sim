@@ -14,8 +14,12 @@ consistent with that doc and update it when behaviour changes.
 
 ## Non-negotiable constraints
 
-1. **Read-only.** No signer, no keys, no transactions, no wallet connection. The server
+1. **Read-only.** No signer, no keys, no transactions, no wallet connection. The local server
    binds loopback and serves only frontend assets plus the read-only API. Never weaken this.
+   A deployment (2026-11-10, `docs/deployment-vercel.md`) does not weaken it either: it runs the
+   same route table, reads the same indexer, and holds no credential — but it does change *who can
+   ask the tool to work*, which is why the loopback host rule becomes "answer your own host and
+   refuse everything else" there rather than disappearing.
 2. **Exact money.** bigint internally, decimal strings at the API edge. Path equity is an
    integer-unit accumulation of exact trade PnLs; only percentile interpolation is float,
    and it happens on decimals at the edge.
@@ -42,7 +46,10 @@ consistent with that doc and update it when behaviour changes.
 | Run identity, store, manifest | `src/runs/*` |
 | Invariants | `src/verify/invariants.ts` |
 | Web (React, esbuild bundle) | `src/web/*`, `public/*` |
-| HTTP API | `src/bin/web.ts`, `src/backtest-api.ts` |
+| Route table — one table, both transports | `src/server/app.ts`, `src/server/contract.ts` |
+| Transports: loopback server / serverless function | `src/bin/web.ts` + `src/server/node-transport.ts`, `api/[...all].ts` + `src/server/web-transport.ts` |
+| HTTP API helpers, lanes, work budget | `src/bin/http-kit.ts`, `src/bin/work-lanes.ts`, `src/backtest-api.ts` |
+| Live market/config reads and their opt-in TTL | `src/history/market.ts`, `src/data/live-cache.ts`, `PERP_SIM_LIVE_CACHE_SEC` |
 | CLI | `src/bin/backtest.ts` |
 
 ## Phase plan
@@ -130,10 +137,12 @@ pnpm gate
 ```
 
 `gate` is `pnpm typecheck`, then every suite — `test:units`, `test:engine`, `test:data`,
-`test:analytics`, `test:resample`, `test:calibration`, `test:verify`, `test:runs`, `test:web` —
-then `build:web`. It is offline: `src/config.ts` ships Hideki defaults, and the suites reach only a
-`t.mock`'d fetch or a loopback server they spawn themselves. A gate that needs the venue is a gate
-that goes red when the venue hiccups, so nothing in it may start making network calls.
+`test:analytics`, `test:resample`, `test:calibration`, `test:verify`, `test:runs`, `test:web`,
+`test:server` — then `build:site` (which is `build:web` plus staging the static directory a
+deployment serves, with every staged file checked against its source size). It is offline:
+`src/config.ts` ships Hideki defaults, and the suites reach only a `t.mock`'d fetch or a loopback
+server they spawn themselves. A gate that needs the venue is a gate that goes red when the venue
+hiccups, so nothing in it may start making network calls.
 
 It is called `gate`, not `ci`, because `pnpm ci` is pnpm's own frozen-install command: a script with
 that name is unreachable by its obvious invocation, and typing the obvious invocation reinstalls
@@ -148,6 +157,15 @@ Same aggregate in CI: `.github/workflows/ci.yml`, job `gate` (Node 22 / pnpm 12,
 Job `live` runs the three read-only chain commands — `probe:markets`, `preflight`, `backtest` — on a
 schedule, on `main`, and by hand; it holds no credential and never blocks a pull request. Neither
 job runs `test:guards`.
+
+Job `deploy` is the third, and it is inert unless a repository variable says otherwise:
+`vars.VERCEL_DEPLOY_ENABLED == 'true'` must hold *and* the event must be a push, or a PR from a branch
+of this repository (an fork PR gets no secrets and no publish either). It runs `gate` first and only
+then `vercel pull` / `vercel build` / `vercel deploy --prebuilt`, using `VERCEL_TOKEN`, `VERCEL_ORG_ID`
+and `VERCEL_PROJECT_ID` as secrets. The job publishes a static directory and one read-only function;
+it holds no chain credential of any kind. `test-reach.test.ts` does not look at workflows, so
+forgetting to name a suite here is still caught locally — but a suite dropped from this job is not,
+which is why the gate tail is the same list in both places.
 
 `pnpm test:guards` is the mutation harness for the `src/web` render guards: it injects each bug a
 guard claims to catch and requires the named test to go red. It re-runs a test file per probe, so it

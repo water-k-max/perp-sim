@@ -11,8 +11,10 @@
   "scripts": {
     "dev": "pnpm build:web && tsx src/bin/web.ts",
     "build:web": "esbuild src/web/main.tsx --bundle --minify --format=iife --platform=browser --target=es2022 --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=dist/web/app.js",
+    "build:site": "pnpm build:web && tsx src/bin/stage-site.ts",
     "typecheck:web": "tsc --project tsconfig.web.json --noEmit",
     "test:web": "tsx --tsconfig ./tsconfig.web.json --test src/bin/*.test.ts src/backtest-api.test.ts src/backtest-repro.test.ts src/client.test.ts src/web/*.test.ts src/web/*.test.tsx",
+    "test:server": "tsx --test src/server/*.test.ts",
     "probe:markets": "tsx src/bin/probe-markets.ts",
     "backtest": "tsx src/bin/backtest.ts",
     "preflight": "tsx src/bin/preflight.ts",
@@ -28,7 +30,7 @@
     "test:calibration": "tsx --test src/resample/calibration.test.ts",
     "test:verify": "tsx --test src/verify/*.test.ts",
     "test:guards": "bash test/guard-injections.sh",
-    "gate": "pnpm typecheck && pnpm test:units && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:resample && pnpm test:calibration && pnpm test:verify && pnpm test:runs && pnpm test:web && pnpm build:web",
+    "gate": "pnpm typecheck && pnpm test:units && pnpm test:engine && pnpm test:data && pnpm test:analytics && pnpm test:resample && pnpm test:calibration && pnpm test:verify && pnpm test:runs && pnpm test:web && pnpm test:server && pnpm build:site",
     "typecheck": "tsc --noEmit && pnpm typecheck:web"
   },
   "dependencies": {

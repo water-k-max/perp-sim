@@ -7,6 +7,7 @@ import { run, type RunResult } from "./engine/loop.js";
 import { PROFILES, type FillProfile } from "./engine/fills.js";
 import { ParameterTimeline } from "./data/params.js";
 import { loadMarketData } from "./data/ingest.js";
+import { onceLive } from "./data/live-cache.js";
 import type { MarketData } from "./data/types.js";
 import { createTapeSource, createFrozenTapeSource, type TapeSource } from "./data/tape.js";
 import { readSnapshot, writeSnapshot, sha256, CacheCorruptionError } from "./data/store.js";
@@ -137,7 +138,7 @@ function parseStrategy(value: unknown, legacy: Request): RunRequest["strategy"] 
 
 export async function listMarkets() {
   const client = createClient().client;
-  return (await listPerps(client)).filter(m => m.baseSymbol && m.baseDecimals !== null && m.baseDecimals !== undefined)
+  return (await onceLive("perp-markets", () => listPerps(client))).filter(m => m.baseSymbol && m.baseDecimals !== null && m.baseDecimals !== undefined)
     .map(m => ({ symbol: m.baseSymbol as string, quoteSymbol: m.quoteSymbol ?? "USDso", baseDecimals: m.baseDecimals as number, lot: fromRaw(BigInt(m.lotSize), m.baseDecimals as number), minQuantity: fromRaw(BigInt(m.minQuantity), m.baseDecimals as number) }));
 }
 
@@ -188,14 +189,14 @@ function recordTape(source: TapeSource): { source: TapeSource; fills: () => read
  */
 export async function runReplay(input: RunRequest): Promise<Replay> {
   const client = createClient().client;
-  const rows = await listPerps(client);
+  const rows = await onceLive("perp-markets", () => listPerps(client));
   let market;
   try {
     market = selectMarket(rows, input.market);
   } catch (error) {
     throw new BacktestInputError(error instanceof Error ? error.message : "Market could not be resolved.");
   }
-  const cfg = await resolveConfig(client, market);
+  const cfg = await onceLive(`perp-config:${market.poolAddress}`, () => resolveConfig(client, market));
 
   let data;
   try {
@@ -517,11 +518,11 @@ function buildStrategy(input: RunRequest, size: bigint): Strategy {
 
 export async function runBacktest(input: Request) {
   const client = createClient().client;
-  const rows = await listPerps(client);
+  const rows = await onceLive("perp-markets", () => listPerps(client));
   let market;
   try { market = selectMarket(rows, input.market); }
   catch (error) { throw new BacktestInputError(error instanceof Error ? error.message : "Market could not be resolved."); }
-  const cfg = await resolveConfig(client, market);
+  const cfg = await onceLive(`perp-config:${market.poolAddress}`, () => resolveConfig(client, market));
   const end = Math.floor(Date.now() / 1000);
   const found = await fundingWindow(client, cfg.pool, end - input.days * 86400, end);
   let bars = buildBars(found.rows);

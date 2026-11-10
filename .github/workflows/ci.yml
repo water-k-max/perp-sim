@@ -11,6 +11,13 @@ name: ci
 #          where drift gets caught: a market list that changes, an indexer that starts refusing a
 #          query shape, an arithmetic invariant that breaks against real settlement data. It never
 #          blocks a pull request, and it never holds a credential — every call it makes is a read.
+#   deploy — builds the static site and the one serverless function, and ships them to Vercel.
+#          INERT BY CONSTRUCTION: it is skipped until the repository variable
+#          `VERCEL_DEPLOY_ENABLED` is set to `true`, which is what the state is until a project
+#          exists. Publishing does not change what the tool may do: the deployed function reads the
+#          indexer and the chain the same read-only way, holds no key, signs nothing and submits
+#          nothing. What publishing does change is who can ask it to work — see
+#          docs/deployment-vercel.md on the per-instance lane cap.
 #
 # `pnpm test:guards` (the src/web mutation harness) is in neither job: it re-runs a test file per
 # injection and costs minutes. Run it when a render guard changes; see AGENTS.md.
@@ -83,3 +90,54 @@ jobs:
       #    what it computes. Exit 1 is a read failure, 2 is an invariant breach; both are red.
       - name: pnpm backtest
         run: pnpm backtest --days "${{ github.event.inputs.days || '7' }}"
+
+  deploy:
+    name: vercel deploy (static site + one function)
+    needs: gate
+    # A repository *variable*, not a secret: `secrets` is not readable in a job-level `if`, and the
+    # question this condition answers is "is there a project to ship to", which is state, not a
+    # credential. Until somebody sets it, the job is skipped and the pipeline is two jobs.
+    # The fork clause keeps a pull request from a fork from starting a job whose secrets it must not
+    # receive; it fails red otherwise, which would read as a broken pipeline rather than an unbuilt one.
+    if: vars.VERCEL_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+      # A pull request gets a preview on its own host; a push to main is the production alias. The
+      # function derives the host it accepts requests from per invocation, so nothing here has to
+      # know a preview URL in advance — see api/[...all].ts.
+      - name: Resolve target
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "environment=development" >> "$GITHUB_OUTPUT"
+            echo "production=" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+            echo "production=--prod" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Pull project settings
+        run: vercel pull --yes --environment="${{ steps.target.outputs.environment }}" --token "$VERCEL_TOKEN"
+      # Built here, not on the platform, so what ships is what this job's `gate` tested.
+      - name: Build site and function
+        run: vercel build ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN"
+      - name: Deploy the build output
+        run: |
+          url=$(vercel deploy --prebuilt ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN")
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "## Deployed ${url}" >> "$GITHUB_STEP_SUMMARY"
