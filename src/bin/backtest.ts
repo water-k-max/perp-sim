@@ -1,7 +1,7 @@
 import { BacktestInputError, parseRunRequest, runModel, runReplay } from "../backtest-api.js";
 import { fromRaw, utc } from "../units.js";
 import { attributionView } from "../analytics/attribution.js";
-import { markouts, metricsView } from "../analytics/metrics.js";
+import { markoutHorizonLabel, markoutHorizonsSec, markoutLadder, metricsView } from "../analytics/metrics.js";
 import { invariantsOk } from "../verify/invariants.js";
 
 const arg = (name: string, fallback: string): string => {
@@ -130,8 +130,11 @@ console.log(
 console.log(
   `  trades ${view.trades} (${view.wins}W/${view.losses}L, win ${view.winRateBps ?? "n/a"}bps)  expectancy ${view.expectancy === null ? "n/a" : money(BigInt(view.expectancy))}  avg hold ${view.avgHoldSec ?? "-"}s`,
 );
-const markout = markouts(result.fills, priceAt, 3600);
-console.log(`  markout 1h ${markout === null ? "n/a" : `${markout}bps`}  (${result.fills.length} fill(s))`);
+for (const rung of markoutLadder(result.fills, priceAt, markoutHorizonsSec(cfg.fundingIntervalSec))) {
+  console.log(
+    `  markout ${markoutHorizonLabel(rung.horizonSec)} ${rung.markoutBps === null ? "n/a" : `${rung.markoutBps}bps`}  (${rung.observed}/${rung.total} fill(s) observed)`,
+  );
+}
 
 if (result.fills.length > 0) {
   console.log("\nfills  (modelled, not executed)");

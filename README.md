@@ -12,7 +12,7 @@ Any of the indexed perp markets works, over any window the indexer covers (up to
 - **Settlement-mark oracle.** The same strategy can be replayed at the next settlement mark. This is the legacy, conservative path and it reproduces the committed golden run bit for bit.
 - **Per-epoch parameters.** Initial/maintenance margin, close-out, fees and position caps are resolved at each fill's own block from `PerpPoolParametersEpoch`, falling back to current chain parameters only when an epoch is missing.
 - **Real accounting.** Average-entry positions (the chain's own convention), taker and maker fees by role, funding by cumulative index, gas per transaction, side flips, and an exact cash identity.
-- **Analytics.** Sharpe, Sortino, drawdown, turnover, win rate, expectancy, holding time, 1-hour markouts, and a signed attribution whose residual must be zero.
+- **Analytics.** Sharpe, Sortino, drawdown, turnover, win rate, expectancy, holding time, a markout ladder read at 1, 4 and 24 settlement intervals, and a signed attribution whose residual must be zero.
 - **Invariants.** Equity identity, quantity identity, fee recomputation, no lookahead, determinism, coverage completeness and more — each either passes, fails, or is explicitly skipped with a reason.
 - **Account reconciliation.** Replays a public account's own fills through the same position book and diffs the result against the indexer's `PerpPositionChange` and `PerpFeeRecord` rows.
 - **Reproducible identity.** Every run carries a `runId`, a `dataVersion` (hash of the dataset), a `configHash` (parameters + model + strategy) and a `codeCommit`, so two runs that disagree can be told apart.
@@ -48,7 +48,7 @@ Open `http://localhost:3000` for the NOVA Protocol Backtest Lab.
 - Market, direction, base size and hypothetical cash, with the lot grid and market minimum read live from the indexer.
 - Window as a lookback in days or an explicit UTC date range.
 - **Execution model** panel: tape fill model with optimistic/realistic/conservative profile, decision latency, gas per order, and the strategy (fixed position or SMA crossover).
-- Results: equity curve, signed price/funding/fee attribution, Sharpe/Sortino/turnover/win rate/markout, and tabs for closed trades, fills (with the modelled-fill notice), invariants and the run's identity.
+- Results: equity curve, signed price/funding/fee attribution, Sharpe/Sortino/turnover/win rate/markout ladder, and tabs for closed trades, fills (with the modelled-fill notice), invariants and the run's identity (where the ladder's observed counts are printed).
 - A permanent **MODELLED FILL** badge when the tape model is used, and **NO FILL** when an entry never traded.
 - A run comparison list kept in browser storage, and a JSON export of the full response.
 
@@ -97,7 +97,7 @@ All money is exact bigint internally and decimal strings at the API edge.
 - `totalReturnBps`, `maxDrawdownBps`, `turnoverBps` from marked equity.
 - `sharpe` and `sortino` annualised from per-settlement returns, `null` under three bars or zero variance.
 - `winRateBps`, `avgTrade`, `expectancy`, `avgHoldSec`, best/worst trade from closed trades.
-- `markout1hBps`: favourable-after-fill price movement in basis points, measured at the first settlement mark at or after `fill.t + 1 h`. Fills whose horizon has no settlement inside the window are skipped, so a run whose last hour holds every fill reports `null`. Only the 1-hour horizon is published.
+- `markout.rungs`: the markout ladder — favourable-after-fill price movement in basis points, measured at the first settlement mark at or after `fill.t + horizonSec`, at 1, 4 and 24 settlement intervals (`fundingIntervalSec` is 3600 on the live config, so 1 h / 4 h / 24 h on Hideki). Horizons are multiples of the cadence rather than round hours because the oracle prints once per interval: a shorter horizon would be the next mark wearing a different label. Each rung carries `observed`/`total`, because a horizon running past the window has nothing to read — the frozen fixture's 2-fill run publishes `1 h = 99 bps (1 of 2)` with both longer rungs `null (0 of 2)`. `bps` is a decimal string or `null`, and `null` means unobserved, never flat.
 - `attribution`: `Δequity = price − funding − fees − gas`, each signed, with an exact `residual`.
 
 ## Invariants
@@ -178,7 +178,7 @@ pnpm test:units && pnpm test:web && pnpm test:engine && pnpm test:data && pnpm t
 - **No order-book replay.** The venue publishes historical trades, not depth, so queue position and book impact are not modelled. The result never claims otherwise: the `book-not-crossed` invariant skips with that reason rather than passing.
 - **No liquidation fill price or liquidation fee.** A maintenance breach ends the run at the adverse extreme and is labelled as a modelled breach, not a liquidation transaction. Real liquidation penalties are on chain and are read — the reconcile reports them on their own rail — but the simulator does not charge one.
 - **Gas is a constant** (`--gas`), not a measured cost.
-- **Markouts are hourly only.** The 60-second candle series is not ingested, so 1 m and 5 m markouts are not reported.
+- **No markout below one settlement interval, and none past the window.** The oracle marks hourly on Hideki, so a 1 m or 5 m markout would be the next hourly mark given a different name; the ladder starts at one interval. The longest rung (24 intervals) is unobserved on a window shorter than a day plus the fills' own spread, and the ladder prints `no mark` with the fill count rather than a zero.
 - **Fills are modelled, not executed.** A tape fill estimates what a small taker could have got; it is not a record of a real order. The forced end-of-run close is priced at the final settlement mark (the fills table marks it `tape prints: mark`) and the result says so in its warnings.
 - **One position at a time.** Cross-market margin, ADL, insurance funds, and multi-leg portfolios are out of scope, as are parameter sweeps and walk-forward. Monte Carlo trade-order resampling is implemented (`src/resample/`).
 - **Fill fees are zero by venue policy, not by omission.** All 22 live Hideki perp markets report `taker=0 maker=0` bps×1k, so every simulated run's fee attribution is structurally zero and the reconcile's fill-fee leg cannot fail here — it now says so (`vacuous-zero-rate`). Non-zero rates are implemented and are exercised by a fixture with a forced non-zero rate, which catches a wrong fee record. The perp fee stream itself is not empty: it is dominated by non-zero `LiquidationFee` rows, which are penalties on forced closes and are reported separately.

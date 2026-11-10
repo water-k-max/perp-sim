@@ -4,7 +4,7 @@ import type { Bar } from "../history/bars.js";
 import type { MarketConfig } from "../history/market.js";
 import { run } from "../engine/loop.js";
 import { fixedPosition } from "../strategy/fixed.js";
-import { computeMetrics, markouts, metricsView, settlementPriceAt } from "./metrics.js";
+import { computeMetrics, markoutHorizonLabel, markoutHorizonsSec, markoutLadder, markoutView, metricsView, settlementPriceAt } from "./metrics.js";
 import { attribute } from "./attribution.js";
 import { isqrt, sqrtScaled, toDecimal } from "./decimal.js";
 
@@ -84,15 +84,17 @@ test("attribution reconciles exactly and exposes no residual on a clean run", as
   assert.equal(a.delta, a.price - a.funding - a.feesTaker - a.feesMaker - a.gas);
 });
 
-test("markouts look up a later price and sign by direction", () => {
+test("a markout looks up a later price and signs by direction", () => {
   const fill = {
     id: "f", orderId: "o", side: "buy" as const, size: oneBase, price: 100n * E18, quote: 100n * E18,
     t: 1_000, role: "taker" as const, fee: 0n, feeBps: 0n, consumedFillIds: [], tag: null,
   };
   const priceAt = (t: number) => (t === 1_060 ? 101n * E18 : null);
-  assert.equal(markouts([fill], priceAt, 60), 100n, "1 quote on 100 is 100 bps");
-  assert.equal(markouts([{ ...fill, side: "sell" }], priceAt, 60), -100n);
-  assert.equal(markouts([fill], () => null, 60), null);
+  assert.equal(markoutLadder([fill], priceAt, [60])[0]!.markoutBps, 100n, "1 quote on 100 is 100 bps");
+  assert.equal(markoutLadder([{ ...fill, side: "sell" }], priceAt, [60])[0]!.markoutBps, -100n, "favourable is the direction the position points");
+  const unread = markoutLadder([fill], () => null, [60])[0]!;
+  assert.equal(unread.markoutBps, null, "no printed mark is no number, not a zero");
+  assert.equal(unread.observed, 0, "and the fill that was skipped is counted as unobserved");
 });
 
 test("settlementPriceAt gives the first mark at or after the second asked for", () => {
@@ -104,13 +106,59 @@ test("settlementPriceAt gives the first mark at or after the second asked for", 
   assert.equal(settlementPriceAt([])(0), null);
 });
 
-test("markouts on settlement marks skip fills whose horizon never printed", () => {
+test("a horizon that never printed skips the fill instead of guessing it", () => {
   const fill = {
     id: "f", orderId: "o", side: "buy" as const, size: oneBase, price: 100n * E18, quote: 100n * E18,
     t: 1_000, role: "taker" as const, fee: 0n, feeBps: 0n, consumedFillIds: [], tag: null,
   };
   // fill.t + 1 h is bar 1's settlement exactly: 101 against a 100 fill.
-  assert.equal(markouts([fill], settlementPriceAt(bars), 3_600), 100n);
+  assert.deepEqual(markoutLadder([fill], settlementPriceAt(bars), [3_600]).map((r) => [r.markoutBps, r.observed, r.total]), [[100n, 1, 1]]);
   // With only two settlements the hour horizon is unreadable, so the fill is skipped, not guessed.
-  assert.equal(markouts([fill], settlementPriceAt(bars.slice(0, 2)), 5 * 3_600), null);
+  assert.deepEqual(markoutLadder([fill], settlementPriceAt(bars.slice(0, 2)), [5 * 3_600]).map((r) => [r.markoutBps, r.observed, r.total]), [[null, 0, 1]], "total still reports the fill that was dropped");
+});
+
+const ladderFill = {
+  id: "f", orderId: "o", side: "buy" as const, size: oneBase, price: 100n * E18, quote: 100n * E18,
+  t: 1_000, role: "taker" as const, fee: 0n, feeBps: 0n, consumedFillIds: [], tag: null,
+};
+
+test("the ladder is read at whole settlement intervals, never below one", () => {
+  assert.deepEqual(markoutHorizonsSec(3_600), [3_600, 14_400, 86_400], "hourly marks give 1 h / 4 h / 24 h");
+  assert.deepEqual(markoutHorizonsSec(900), [900, 3_600, 21_600], "a 15-minute venue is asked 15 m / 1 h / 6 h, not a horizon that cannot differ from the next mark");
+});
+
+test("the ladder shows the shape of the curve and how much of it was observed", () => {
+  const ladder = markoutLadder([ladderFill], settlementPriceAt(bars), markoutHorizonsSec(cfg.fundingIntervalSec));
+  assert.deepEqual(ladder.map((r) => r.horizonSec), [3_600, 14_400, 86_400], "rungs come back in the order asked for");
+  assert.equal(ladder[0]!.markoutBps, 100n, "one quote on 100 at the next mark");
+  assert.equal(ladder[1]!.markoutBps, 200n, "four marks later the same fill reads 102 against its 100");
+  assert.equal(ladder[2]!.markoutBps, null, "a horizon past the end of the window is unobserved, and unobserved is never zero");
+  assert.deepEqual(ladder.map((r) => [r.observed, r.total]), [[1, 1], [1, 1], [0, 1]], "the long rung loses the only fill, and says so");
+});
+
+test("a ladder over no fills still has every rung, each observed zero times", () => {
+  const ladder = markoutLadder([], settlementPriceAt(bars), markoutHorizonsSec(3_600));
+  assert.equal(ladder.length, 3, "a run with no fills is a question not asked, not a missing row");
+  assert.deepEqual(ladder.map((r) => [r.markoutBps, r.observed, r.total]), [[null, 0, 0], [null, 0, 0], [null, 0, 0]]);
+});
+
+test("a sell is signed the other way at every horizon of the ladder", () => {
+  const ladder = markoutLadder([{ ...ladderFill, side: "sell" }], settlementPriceAt(bars), [3_600, 14_400]);
+  assert.deepEqual(ladder.map((r) => r.markoutBps), [-100n, -200n], "favourable is positive for the direction the position points");
+});
+
+test("markoutView puts decimal strings and one shared label on the wire", () => {
+  const view = markoutView(markoutLadder([ladderFill], settlementPriceAt(bars), markoutHorizonsSec(cfg.fundingIntervalSec)));
+  assert.deepEqual(view.rungs.map((r) => r.label), ["1 h", "4 h", "24 h"]);
+  assert.deepEqual(view.rungs.map((r) => r.bps), ["100", "200", null], "bigint never crosses the API edge");
+  assert.deepEqual(view.rungs.map((r) => [r.observed, r.total]), [[1, 1], [1, 1], [0, 1]]);
+});
+
+test("the horizon label is the string both surfaces print", () => {
+  assert.equal(markoutHorizonLabel(3_600), "1 h");
+  assert.equal(markoutHorizonLabel(14_400), "4 h");
+  assert.equal(markoutHorizonLabel(86_400), "24 h");
+  assert.equal(markoutHorizonLabel(900), "15 m");
+  assert.equal(markoutHorizonLabel(5_400), "90 m", "an hour and a half is not rounded to a whole hour");
+  assert.equal(markoutHorizonLabel(61), "61s", "a horizon that is not a whole minute is printed in seconds");
 });

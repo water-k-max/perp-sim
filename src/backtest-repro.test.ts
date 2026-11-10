@@ -10,7 +10,7 @@ import type { MarketConfig } from "./history/market.js";
 import type { MarketData } from "./data/types.js";
 import type { RunRequest } from "./backtest-api.js";
 import type { TapeSlice } from "./data/tape.js";
-import { parseChainReport } from "./web/dto.js";
+import { decimal, parseChainReport, type MarkoutRungs } from "./web/dto.js";
 
 const root = await mkdtemp(join(tmpdir(), "perp-replay-test-"));
 process.env.PERP_SIM_CACHE = root;
@@ -68,6 +68,27 @@ test("saved report and engine reproduce without network; cash and intrabar chang
   const recaptured = await replayPrepared(input, cfg, data);
   assert.equal(recaptured.manifest.runId, replay.manifest.runId);
   await persistReplay(recaptured, input);
+});
+
+test("the stored report publishes the markout ladder at the fixture's own settlement cadence", async t => {
+  t.mock.method(globalThis, "fetch", () => { throw new Error("Network forbidden during frozen replay"); });
+  const replay = await replayPrepared(input, cfg, dataset());
+  const saved = await persistReplay(replay, input);
+  // The rung type is the one the browser declares, so a server that changes the shape fails to
+  // compile here instead of leaving the card reading a field that no longer exists.
+  const rungs: MarkoutRungs = saved.result.analytics.markout.rungs;
+  t.diagnostic(`markout ladder: ${JSON.stringify(rungs)}`);
+  assert.deepEqual(rungs.map((r) => r.horizonSec), [3_600, 14_400, 86_400], "1, 4 and 24 settlement intervals of this config's 3600s cadence");
+  assert.deepEqual(rungs.map((r) => r.label), ["1 h", "4 h", "24 h"]);
+  assert.equal(rungs[2]!.bps, null, "a 24 h horizon cannot be observed inside a 5-hour fixture");
+  assert.deepEqual(rungs.map((r) => r.observed), [1, 0, 0], "only the fill with a mark a whole interval later is counted");
+  assert.equal(new Set(rungs.map((r) => r.total)).size, 1, "every rung is measured over the same fill set");
+  for (const [i, rung] of rungs.entries()) {
+    assert.equal(rung.total, saved.result.fills.length, "the denominator is the fills this run actually made");
+    assert.ok(rung.observed <= rung.total);
+    assert.ok(i === 0 || rung.observed <= rungs[i - 1]!.observed, "a longer horizon can never be observed more often");
+    assert.ok(rung.bps === null || decimal.test(rung.bps), `rung ${rung.horizonSec}s leaked a non-decimal amount: ${rung.bps}`);
+  }
 });
 
 test("stored reports with a resample request replay byte-for-byte", async t => {

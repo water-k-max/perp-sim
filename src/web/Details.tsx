@@ -12,6 +12,7 @@ function RunFacts({ data }: { data: Result }) {
   const facts: [string, unknown][] = [];
   const fact = (label: string, value: unknown) => facts.push([label, value]);
   const quote = data.quoteSymbol;
+  const rungs = data.analytics?.markout?.rungs;
   if (data.manifest) {
     fact('Run id', data.manifest.runId); fact('Data version', data.manifest.dataVersion);
     fact('Config hash', data.manifest.configHash); fact('Code commit', data.manifest.codeCommit);
@@ -32,6 +33,11 @@ function RunFacts({ data }: { data: Result }) {
     fact('Residual', Number(data.attribution.residual) === 0 ? '0 (exact)' : `${data.attribution.residual} — books do not balance`);
   }
   return <><dl className="facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{String(value ?? '—')}</dd></div>)}</dl>
+    {!!rungs?.length && <><p className="muted">Markout against the venue&rsquo;s own settlement marks. Each horizon is a whole number of settlement intervals, so the curve shows whether a fill&rsquo;s favourability decays or persists. &ldquo;Fills observed&rdquo; is how many fills had a mark printed that far after them; a horizon past the end of the window has nothing to read, and is reported as unobserved rather than as zero.</p><Table rows={rungs} columns={[
+      { label: 'Horizon', render: r => r.label },
+      { label: 'Markout (bps)', render: r => r.bps ?? 'no mark observed', align: 'num' },
+      { label: 'Fills observed', render: r => `${r.observed} of ${r.total}` },
+    ]} /></>}
     {!!data.paramEpochs?.length && <><p className="muted">Parameter epochs read for this window. Each fill is priced with the epoch in force at its own block.</p><Table rows={data.paramEpochs} columns={[
       { label: 'Block', render: e => e.block }, { label: 'Time (UTC)', render: e => date(e.t) },
       { label: 'IM bps', render: e => e.initialMarginBps ?? 'live' }, { label: 'MM bps', render: e => e.maintenanceMarginBps ?? 'live' },

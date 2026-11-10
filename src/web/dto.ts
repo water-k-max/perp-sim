@@ -1,5 +1,5 @@
 import type { listMarkets, runModel, runBacktest, RunRequest } from '../backtest-api.js';
-import type { metricsView } from '../analytics/metrics.js';
+import type { metricsView, markoutView } from '../analytics/metrics.js';
 import type { ResampleAnalysis } from '../resample/analysis.js';
 
 type ModelResult = Awaited<ReturnType<typeof runModel>>;
@@ -12,6 +12,8 @@ export type Result = Omit<LegacyResult, 'entryPrice' | 'from' | 'to'> & {
   resample?: ResampleBlock;
 } & Partial<Omit<ModelResult, keyof LegacyResult | 'analytics' | 'resample'>>;
 export type Market = Awaited<ReturnType<typeof listMarkets>>[number];
+/** The ladder the server publishes, taken from the module that publishes it — never restated here. */
+export type MarkoutRungs = ReturnType<typeof markoutView>['rungs'];
 export type RequestDTO = Omit<RunRequest, 'days' | 'from' | 'to'> & { days?: number; from?: string; to?: string };
 export const decimal = /^-?\d+(?:\.\d+)?$/;
 export const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;

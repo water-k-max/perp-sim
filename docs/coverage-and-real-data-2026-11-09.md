@@ -298,6 +298,61 @@ Ranked by how much they change what you can claim out loud.
     bar at or after `t + 1 h`* ([src/resample/analysis.ts](../src/resample/analysis.ts)), so "1 h
     markout" ≈ "next bar", and there is no 5-minute/1-hour/1-day curve to say whether the edge decays
     or persists.
+    **Fixed (2026-11-10): the ladder is published, and each rung says how much of it was seen.**
+    Three structural changes, not a constant changed from 3600 to three constants:
+
+    - **The horizons are derived from the venue's own cadence, not from round hours.**
+      `markoutHorizonsSec(cfg.fundingIntervalSec)` → 1, 4 and 24 settlement intervals, because the
+      oracle prints once per interval: a horizon shorter than one interval *is* the next mark, and a
+      ladder with two rungs that cannot differ would be a curve in name only. On Hideki's 3600 s that
+      is exactly 1 h / 4 h / 24 h; on a 15-minute venue it is 15 m / 1 h / 6 h and still honest.
+    - **Observation is data now.** Every rung carries `observed`/`total` (`markoutLadder` in
+      [src/analytics/metrics.ts](../src/analytics/metrics.ts)): a 24 h horizon on a 5-hour window has
+      nothing to read, and the old single number could only answer that with `null` — indistinguishable
+      from "every fill was flat". `bps: null` prints as `no mark`, never as `0.0 bps`.
+    - **`markout1hBps` is gone from the wire**, replaced by `analytics.markout.rungs[]`
+      (`markoutView`), and both surfaces take their horizon text from one `markoutHorizonLabel`, the
+      same rule that made `fill-coverage.ts` shared. The card headlines the shortest rung and prints
+      the shape of the rest; the counts are in **Run & data**.
+
+    Evidence: 8 unit tests on the ladder and its wire shape (cadence multiples, order, sign,
+    truncation, the empty-fill case, the shared label), and 4 render tests on the card. Every guard
+    was re-proved by injecting the bug it exists to catch: `MARKOUT_INTERVAL_MULTIPLES` set to
+    `[1, 2, 3]` fails 3 unit tests; `observed: fills.length` instead of the count actually printed
+    fails 4; `markoutView` turning an unobserved rung into `"0"` fails 1 (the `["100","200",null]`
+    wire assertion); and the same lie told inside the card instead of inside `markoutView` — `rung.bps
+    ?? 0` — fails 1 render test, printing `4 h 0.0 bps · 24 h 0.0 bps` for a horizon nobody observed.
+    Those two injections are deliberately separate: the render tests hand-build rung records, so they
+    guard the card's own reading of `null`, and only the unit suite guards the server's production of
+    it. The stored-report test pins the wire shape *and* types the rungs with the browser's own
+    `MarkoutRungs`, so a server that renames the field stops compiling rather than leaving the card
+    reading `undefined`.
+
+    Live, on real Hideki history (BTC, 7 days, 168 settlements, cadence 3600 s, one entry fill plus
+    the forced terminal close): `markout 1 h 22bps (1/2 fill(s) observed)`, `4 h 21bps`, `24 h 187bps`.
+    The entry's favourability persists into a day, and the terminal close contributes nothing to any
+    rung — which is the decay-versus-persistence question this item said could not be asked, now
+    answered with the truncation visible beside it instead of hidden inside a `null`.
+
+    Same ladder, rendered in the browser rather than printed at a terminal (default 14-day BTC
+    lookback, 336 settlements, 3 fills): the card reads `Markout · 1 h` / `4.0 bps` / shape
+    `1 h 4.0 bps · 4 h 14.0 bps · 24 h 186.0 bps`, and **Run & data** prints
+    `1 h 4 2 of 3 · 4 h 14 2 of 3 · 24 h 186 2 of 3` — the third fill is the forced terminal close,
+    which has no later mark at any horizon, so all three rungs are means over two fills. Before the
+    run the same card read `— / No horizons published for this run`; that empty state is what a
+    legacy-shaped response (no `analytics` key at all) renders as, and it is the only state in which
+    the card prints nothing.
+
+    What this does not do: horizons below one settlement interval (the mark feed is hourly; a candle
+    close is a different price basis and sits a variable distance past the horizon — see
+    `settlementPriceAt`), and no per-side split: buys and sells are signed and pooled into one mean.
+
+    One correction to the gap as written: it pointed at `src/resample/analysis.ts`, which computes no
+    markout at all — its `horizonTrades` is a count of trades per path, not a point in time. The only
+    markout in the repository was `markouts(..., 3600)` called from `modelResponse` and the CLI, and
+    that is what changed: `markouts` now has no production caller and has been deleted, so
+    `markoutLadder` is the one place a markout is computed and there is no second definition left to
+    drift from the first.
 11. **Sample sizes in the real-address path are tiny, and nothing in the UI prepares you.** Today's
     live BTC window gave 6 fills → 3 closes for a genuinely active account. The wallet panel warns at
     fewer than 30 closed trades — correctly — but the *reason* it will usually warn is worth knowing:

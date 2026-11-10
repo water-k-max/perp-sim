@@ -2,11 +2,28 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Chart } from './Chart.js';
 import { Details } from './Details.js';
 import { ResamplePanel, StaleNote } from './Resample.js';
-import { amount, date, day, describeModel, number, type Result, type RunFailure } from './dto.js';
+import { amount, date, day, describeModel, number, type MarkoutRungs, type Result, type RunFailure } from './dto.js';
 import type { HistoryEntry } from './history.js';
 
 function Metric({ id, value, signed = false, quote }: { id: string; value: string | undefined; signed?: boolean; quote?: string }) {
   return <strong id={id} title={value === undefined ? undefined : quote ? `${value} ${quote}` : value} className={signed && Number(value) > 0 ? 'positive' : signed && Number(value) < 0 ? 'negative' : undefined}>{number(value)}</strong>;
+}
+/**
+ *  Markout at three horizons, each a whole number of settlement intervals. The headline is the
+ *  shortest — the mark the venue prints after the fill — and the line under it is the shape of
+ *  the curve, so decay versus persistence is readable without opening another tab.
+ *
+ *  A rung whose horizon never printed reads "no mark", never a zero: on a short window the long
+ *  horizon was not observed, and 0 bps would report a flat outcome that did not happen.
+ */
+export function MarkoutCard({ rungs }: { rungs: MarkoutRungs }) {
+  const head = rungs[0];
+  const shape = rungs.map(rung => `${rung.label} ${rung.bps === null ? 'no mark' : `${number(Number(rung.bps), 1)} bps`}`).join(' · ');
+  return <article className="panel metric">
+    <h4>Markout{head ? ` · ${head.label}` : ''}</h4>
+    <strong id="markout">{head?.bps != null ? `${number(Number(head.bps), 1)} bps` : '—'}</strong>
+    <small>{shape || 'No horizons published for this run'}</small>
+  </article>;
 }
 function Coverage({ data }: { data: Result | null }) {
   const clean = data && data.complete && !data.coverage.missingSettlements && !data.coverage.gaps && !data.coverage.anchorResynced && (!data.candleCoverage || (data.candleCoverage.complete && data.candleCoverage.covered === data.candleCoverage.bars));
@@ -30,6 +47,7 @@ export function Results({ data, failure, busy, badge, activity, stale, exportRea
   data: Result | null; failure: RunFailure | null; busy: boolean; badge: string; activity: string; stale: string[]; exportReady: boolean; onExport: () => void; history: HistoryEntry[]; onClear: () => void; onEdit: () => void;
 }) {
   const a = data?.analytics;
+  const markout = a?.markout?.rungs ?? [];
   const panel = useRef<HTMLDivElement>(null);
   const [stickyHeight, setStickyHeight] = useState(0);
   useLayoutEffect(() => {
@@ -73,7 +91,7 @@ export function Results({ data, failure, busy, badge, activity, stale, exportRea
       <article className="panel metric"><h4>Sortino</h4><strong id="sortino">{!data ? '—' : a?.sortino != null ? number(a.sortino) : 'n/a'}</strong><small>Downside deviation only</small></article>
       <article className="panel metric"><h4>Turnover</h4><strong id="turnover">{a?.turnoverBps != null ? `${number(Number(a.turnoverBps) / 100, 0)}%` : '—'}</strong><small>Traded notional / mean equity</small></article>
       <article className="panel metric"><h4>Win rate</h4><strong id="winrate">{a?.winRateBps != null ? `${number(Number(a.winRateBps) / 100, 1)}%` : '—'}</strong><small id="trades-note">{a ? `${a.trades} closed · ${a.wins}W / ${a.losses}L` : 'Closed trades'}</small></article>
-      <article className="panel metric"><h4>Markout 1 h</h4><strong id="markout">{a?.markout1hBps != null ? `${number(Number(a.markout1hBps), 1)} bps` : '—'}</strong><small>Next settlement mark, 1 h after each fill; favourable = positive</small></article>
+      <MarkoutCard rungs={markout} />
     </div>
     <Details data={data} />
     {data?.resample && <ResamplePanel data={data} />}

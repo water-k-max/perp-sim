@@ -14,7 +14,7 @@ import { loadRun, saveRun } from "./runs/store.js";
 import { fixedPosition } from "./strategy/fixed.js";
 import { smaCross } from "./strategy/sma.js";
 import type { Strategy } from "./strategy/types.js";
-import { computeMetrics, markouts, metricsView, settlementPriceAt, type Metrics } from "./analytics/metrics.js";
+import { computeMetrics, markoutHorizonsSec, markoutLadder, markoutView, metricsView, settlementPriceAt, type Metrics } from "./analytics/metrics.js";
 import { attribute, attributionView, type Attribution } from "./analytics/attribution.js";
 import { checkRun, checkResample, type Invariant } from "./verify/invariants.js";
 import { buildResampleAnalysis, parseResampleRequest, type AnalysisInputs, type ResampleAnalysis, type ResampleRequest } from "./resample/analysis.js";
@@ -434,7 +434,10 @@ function modelResponse(replay: Replay, input: RunRequest) {
       requiresFills: true,
     },
     strategy: result.strategy,
-    analytics: { ...metricsView(metrics), markout1hBps: markouts(result.fills, priceAt, 3600)?.toString() ?? null },
+    analytics: {
+      ...metricsView(metrics),
+      markout: markoutView(markoutLadder(result.fills, priceAt, markoutHorizonsSec(cfg.fundingIntervalSec))),
+    },
     attribution: attributionView(attribution),
     invariants,
     fills: result.fills.map((f) => ({

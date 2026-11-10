@@ -144,19 +144,18 @@ export function computeMetrics(result: RunResult): Metrics {
 }
 
 /**
- *  Markout: how a fill looks at a fixed horizon afterwards, in basis points of the fill
- *  price. Positive is favourable (price moved the way the position points).
+ *  The mean over the fills whose horizon was actually printed, and how many fills that was.
  *
  *  `priceAt` must be a published price for the requested second — the caller owns which
  *  series it reads, and a fill whose horizon was never observed is skipped, not estimated.
  *  Markouts are measured after the fact, so reading a mark published past the horizon is an
  *  observation of the outcome, never an input to a decision.
  */
-export function markouts(
+function markoutAt(
   fills: readonly ModeledFill[],
   priceAt: (t: number) => bigint | null,
   horizonSec: number,
-): bigint | null {
+): { markoutBps: bigint | null; observed: number } {
   let sum = 0n;
   let count = 0;
   for (const fill of fills) {
@@ -166,7 +165,66 @@ export function markouts(
     sum += fill.side === "buy" ? raw : -raw;
     count += 1;
   }
-  return count === 0 ? null : sum / BigInt(count);
+  return { markoutBps: count === 0 ? null : sum / BigInt(count), observed: count };
+}
+
+const MARKOUT_INTERVAL_MULTIPLES = [1, 4, 24] as const;
+
+/**
+ *  The horizons the ladder is read at: 1, 4 and 24 settlement intervals.
+ *
+ *  Multiples of the cadence rather than round wall-clock numbers, because the oracle only
+ *  prints once per interval: a horizon shorter than one interval is indistinguishable from
+ *  the next mark, and a ladder whose rungs cannot differ would claim a curve it cannot see.
+ *  At Hideki's hourly settlement this is exactly 1 h / 4 h / 24 h.
+ */
+export function markoutHorizonsSec(settlementIntervalSec: number): number[] {
+  return MARKOUT_INTERVAL_MULTIPLES.map((multiple) => multiple * settlementIntervalSec);
+}
+
+/**
+ *  One rung of the ladder. `observed` is how many fills had a settlement printed inside the
+ *  window at that horizon, out of `total`: a 24 h rung read on a 3-day window loses every fill
+ *  from the last day, and a mean over what survives is only honest next to the count.
+ */
+export type MarkoutRung = {
+  horizonSec: number;
+  markoutBps: bigint | null;
+  observed: number;
+  total: number;
+};
+
+export function markoutLadder(
+  fills: readonly ModeledFill[],
+  priceAt: (t: number) => bigint | null,
+  horizonsSec: readonly number[],
+): MarkoutRung[] {
+  return horizonsSec.map((horizonSec) => {
+    const { markoutBps, observed } = markoutAt(fills, priceAt, horizonSec);
+    return { horizonSec, markoutBps, observed, total: fills.length };
+  });
+}
+
+/** The ladder as decimal strings, ready to serialise. */
+export function markoutView(ladder: readonly MarkoutRung[]): {
+  rungs: { horizonSec: number; label: string; bps: string | null; observed: number; total: number }[];
+} {
+  return {
+    rungs: ladder.map((rung) => ({
+      horizonSec: rung.horizonSec,
+      label: markoutHorizonLabel(rung.horizonSec),
+      bps: rung.markoutBps?.toString() ?? null,
+      observed: rung.observed,
+      total: rung.total,
+    })),
+  };
+}
+
+/** "1 h", "4 h", "24 h", "90 m" — the same string on the CLI and in the browser. */
+export function markoutHorizonLabel(horizonSec: number): string {
+  if (horizonSec % 3600 === 0) return `${horizonSec / 3600} h`;
+  if (horizonSec % 60 === 0) return `${horizonSec / 60} m`;
+  return `${horizonSec}s`;
 }
 
 /**
