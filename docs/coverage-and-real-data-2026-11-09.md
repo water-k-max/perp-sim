@@ -260,8 +260,9 @@ Ranked by how much they change what you can claim out loud.
    that is not JSON, a path count outside the budget) come back 400, 415, 400 and never 429 (38.5 s).
 
    And against the live chain, which is the shape the wallet panel actually uses —
-   `probe/lane-live.mts`, five concurrent read-only requests for `0x6e12c589…60691f` (40 perp fills
-   over 7 d) on port 3111: one
+   `probe/lane-live.mts`, five concurrent read-only requests for `0x6e12c589…60691f` on port 3111
+   (40 perp fills across all markets in 7 d per `probe/pick-account.mts`; the BTC window this probe
+   reads holds 8): one
    `/reconcile`, two `/resample` with different seeds, and two byte-identical copies of the first.
    **Five 200s, zero refusals** — under the lock this exact call would have answered four of them
    with "a replay is already running". The reconcile took 9.0 s, the resample 7.8 s, its two
