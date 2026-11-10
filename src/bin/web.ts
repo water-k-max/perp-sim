@@ -39,16 +39,16 @@ const assets: Record<string, [string, string]> = {
  *  were serialized by each other, and a double-click on the same form got "try again later" instead
  *  of the result it was already waiting for. `src/bin/work-lanes.ts` holds the policy.
  *
- *  What two slots buy, measured on this machine by calling the resample service directly with the
- *  600-path × 500-trade job (so this is the intrinsic cost of running the jobs together, not the
- *  server's schedule — the lane would never run the third at once): one job alone 12.2 s, two
- *  started together 30.5 s (2.49× one), three 43.2 s (3.54×). Path simulation is synchronous CPU on
- *  a single thread, so for that route concurrency buys no throughput at all — slightly less than
- *  serialising would have. It is kept because the routes that made #9 a complaint are the
- *  indexer-bound ones (account reconcile, account resample, forward test), whose wall clock is
- *  network waits that do overlap, and because a queue that can accept a second request is what
- *  turns a stall into a wait. The number that does not depend on the thread is coalescing: eight
- *  identical resamples cost one job.
+ *  What two slots buy, measured by `probe/lane-contention.mts`, which calls the resample service
+ *  directly with the 600-path × 500-trade job (so this is the intrinsic cost of running the jobs
+ *  together, not the server's schedule — the lane would never run the third at once). Two runs:
+ *  one job alone 12.2 s then 8.8 s, two started together 30.5 s then 19.8 s — **2.49× and 2.24×**,
+ *  three 3.54× and 3.05×. Path simulation is synchronous CPU on one thread, so the ratio never
+ *  approaches 1: concurrency buys that route no throughput at all, and slightly less than
+ *  serialising would have. The slots are kept for the routes that made #9 a complaint — account
+ *  reconcile, account resample and forward test are indexer-bound, and their wall clock is network
+ *  waits that do overlap — and for the queue and the coalescing, which are pure wins. The number
+ *  that does not depend on the thread is coalescing: eight identical resamples cost one job.
  */
 const lanes = new WorkLanes({ concurrency: 2, queueLimit: 4 });
 

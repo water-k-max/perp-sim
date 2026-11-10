@@ -259,8 +259,9 @@ Ranked by how much they change what you can claim out loud.
    so that assertion cannot pass vacuously — three bad requests (a digest that is not one, a body
    that is not JSON, a path count outside the budget) come back 400, 415, 400 and never 429 (38.5 s).
 
-   And against the live chain, which is the shape the wallet panel actually uses. Five concurrent
-   read-only requests for `0x6e12c589…60691f` (40 perp fills over 7 d) on port 3111: one
+   And against the live chain, which is the shape the wallet panel actually uses —
+   `probe/lane-live.mts`, five concurrent read-only requests for `0x6e12c589…60691f` (40 perp fills
+   over 7 d) on port 3111: one
    `/reconcile`, two `/resample` with different seeds, and two byte-identical copies of the first.
    **Five 200s, zero refusals** — under the lock this exact call would have answered four of them
    with "a replay is already running". The reconcile took 9.0 s, the resample 7.8 s, its two
@@ -270,16 +271,19 @@ Ranked by how much they change what you can claim out loud.
    still alive at the end.
 
    **What this does not buy, measured rather than assumed.** Two lanes do *not* run two path
-   simulations in parallel: path stepping is synchronous CPU on one thread. Calling the service
-   directly with the same 600 × 500 job, one run alone took **12.2 s**, two started together
-   **30.5 s** (2.49× one, so slightly *worse* in total than serialising would have been), three
-   **43.2 s** (3.54×). The lanes are kept for the routes that made this gap a complaint — account
-   reconcile, account resample and forward test are indexer-bound, and their wall clock is network
-   waits that genuinely overlap — and for the queue and the coalescing, which are pure wins. Worker
-   threads for the CPU-bound path loop remain the open half of the review's upgrade direction, and
-   with them cancel, a progress stream, and a queue position told to the client that is waiting.
-   None of those three exist; a queued request learns nothing until its answer arrives. The lanes are
-   per-process state, so they bound one server, not a fleet.
+   simulations in parallel: path stepping is synchronous CPU on one thread.
+   `probe/lane-contention.mts` calls the resample service directly with the same 600 × 500 job, which
+   prices the intrinsic cost of running the jobs together rather than the server's schedule — the lane
+   would never start the third at once. Two runs: one job alone **12.2 s** then **8.8 s**, two started
+   together **30.5 s** then **19.8 s**, i.e. **2.49×** and **2.24×**, three jobs **3.54×** and
+   **3.05×**. The ratio never comes near 1, so on that route two lanes buy slightly *less* total
+   throughput than serialising would have. The slots are kept for the routes that made this gap a
+   complaint — account reconcile, account resample and forward test are indexer-bound, and their wall
+   clock is network waits that genuinely overlap — and for the queue and the coalescing, which are
+   pure wins. Worker threads for the CPU-bound path loop remain the open half of the review's upgrade
+   direction, and with them cancel, a progress stream, and a queue position told to the client that is
+   waiting. None of those three exist; a queued request learns nothing until its answer arrives. The
+   lanes are per-process state, so they bound one server, not a fleet.
 
    A structural fix this work exposed on the way: `test:web` was a hand-written list of files and had
    silently skipped the new `src/bin/work-lanes.test.ts`, so the ten tests above were green in my
