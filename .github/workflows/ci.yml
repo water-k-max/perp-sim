@@ -141,6 +141,16 @@ jobs:
       # Built here, not on the platform, so what ships is what this job's `gate` tested.
       - name: Build site and function
         run: vercel build ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN"
+      # The function crashed before its handler ever ran: the runtime log is
+      # `ENOENT: /var/task/pnpm-lock.yaml` followed by `Node.js process exited with exit status: 1`.
+      # `/var/task` is the unpacked `.func` directory, and the platform reads a lockfile from beside
+      # the entry — which `vercel build` never traces in, because nothing in the source imports it.
+      # So the deployment ships a pnpm-detected function whose own bootstrap cannot find the pnpm
+      # lockfile. Copying it in answers the read where it actually happens; it is 30 KB.
+      - name: Place the lockfile where the runtime reads it
+        run: |
+          find .vercel/output/functions -name '*.func' -type d -exec cp pnpm-lock.yaml {}/ \;
+          find .vercel/output/functions -name '*.func' -type d -exec sh -c 'echo "--- $1"; ls "$1"' _ {} \;
       - name: Deploy the build output
         id: deploy
         run: |
@@ -153,14 +163,12 @@ jobs:
       - name: Probe the live function and dump its logs
         if: always() && steps.deploy.outcome == 'success'
         run: |
-          echo "=== compiled function entry: module type and head ==="
-          find .vercel/output/functions -name 'package.json' -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \; || true
-          find .vercel/output/functions -path '*api*' -name '*.js' -not -name '*.map' -exec sh -c 'echo "--- $1"; head -25 "$1"' _ {} \; || true
           echo "=== GET /api/chain on the production alias ==="
           curl -sS -i -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
           echo "=== waiting for log ingestion ==="
           sleep 60
           echo "=== runtime errors, default 30m window (hobby rejects a wider one) ==="
-          timeout 120 vercel logs --query 'level:error' --non-interactive --token "$VERCEL_TOKEN" 2>&1 | tail -200 || true
-          echo "=== all runtime logs, default window ==="
-          timeout 120 vercel logs --limit 100 --non-interactive --token "$VERCEL_TOKEN" 2>&1 | tail -200 || true
+          # One line per entry, message head included. The raw --json stream buries the exception
+          # under per-record metadata, which is how the actual cause stayed unread for three pushes.
+          timeout 120 vercel logs --query 'level:error' --limit 30 --non-interactive --token "$VERCEL_TOKEN" 2>&1 \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const l of s.split("\n")){try{const j=JSON.parse(l);if(j.type==="log")console.log(`${j.data.requestMethod} ${j.data.requestPath} :: ${j.data.message.split("\n").slice(0,6).join(" | ")}`)}catch{}}})' || true
