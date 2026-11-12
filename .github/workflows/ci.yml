@@ -111,7 +111,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Vercel CLI
-        run: pnpm add -g vercel
+        run: |
+          pnpm add -g vercel
+          echo "$(pnpm bin -g)" >> "$GITHUB_PATH"
       # A pull request gets a preview on its own host; a push to main is the production alias. The
       # function derives the host it accepts requests from per invocation, so nothing here has to
       # know a preview URL in advance — see api/[...all].ts.
