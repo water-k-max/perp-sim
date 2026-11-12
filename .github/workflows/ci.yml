@@ -153,13 +153,14 @@ jobs:
       - name: Probe the live function and dump its logs
         if: always() && steps.deploy.outcome == 'success'
         run: |
-          echo "=== built function config ==="
-          find .vercel/output/functions -name '*.vc-config.json' -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \; || true
+          echo "=== compiled function entry: module type and head ==="
+          find .vercel/output/functions -name 'package.json' -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \; || true
+          find .vercel/output/functions -path '*api*' -name '*.js' -not -name '*.map' -exec sh -c 'echo "--- $1"; head -25 "$1"' _ {} \; || true
           echo "=== GET /api/chain on the production alias ==="
           curl -sS -i -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
           echo "=== waiting for log ingestion ==="
-          sleep 45
-          echo "=== vercel logs help ==="
-          vercel logs --help 2>&1 || true
-          echo "=== project runtime logs, last hour ==="
-          timeout 120 vercel logs --since 1h --non-interactive --token "$VERCEL_TOKEN" 2>&1 | tail -250 || true
+          sleep 60
+          echo "=== runtime errors, default 30m window (hobby rejects a wider one) ==="
+          timeout 120 vercel logs --query 'level:error' --non-interactive --token "$VERCEL_TOKEN" 2>&1 | tail -200 || true
+          echo "=== all runtime logs, default window ==="
+          timeout 120 vercel logs --limit 100 --non-interactive --token "$VERCEL_TOKEN" 2>&1 | tail -200 || true

@@ -6,16 +6,13 @@
  *  answer looks like lives in `src/server/app.ts` and is shared with the local lab, so a route
  *  cannot mean one thing on `pnpm dev` and another in production. The provenance of that split is in
  *  `src/server/app.test.ts`, which sends the same probes to both transports and fails if they disagree.
- *
- *  Nothing here has been executed on the platform. It is wired and unit-proven, not deployed.
  */
 import type { PublicOrigin } from "../src/server/contract.js";
 
 // The cache and the run store are read off `process.env.PERP_SIM_CACHE` when their modules are
-// first evaluated, which happens inside the dynamic imports below — so the value has to be in place
-// before those lines run. Static imports would be hoisted ahead of it, which is why this file
-// imports dynamically. `/tmp` is the only writable path on the platform, and it does not outlive
-// the instance: that is exactly why the run-store routes answer 501 rather than pretending.
+// first evaluated, which happens inside the dynamic import in `loadRoute` below — so the value has
+// to be in place before that runs. `/tmp` is the only writable path on the platform, and it does not
+// outlive the instance: that is exactly why the run-store routes answer 501 rather than pretending.
 process.env.PERP_SIM_CACHE ??= "/tmp/perp-sim-cache";
 
 // The dataset cache above is keyed by history window, so it never covers the market list or a pool's
@@ -23,9 +20,6 @@ process.env.PERP_SIM_CACHE ??= "/tmp/perp-sim-cache";
 // from one read per minute instead of one per request, which is what this line buys; the reason it is
 // a deployment-only setting is in `src/data/live-cache.ts`.
 process.env.PERP_SIM_LIVE_CACHE_SEC ??= "60";
-
-const { WorkLanes } = await import("../src/bin/work-lanes.js");
-const { serve } = await import("../src/server/web-transport.js");
 
 /**
  *  Which hosts this deployment answers.
@@ -60,9 +54,33 @@ function deploymentOrigins(): PublicOrigin | null {
 
 const publicOrigin = deploymentOrigins();
 
-/** Per-instance slots, for the same reasons `src/bin/web.ts` documents. They bound one warm instance, not a fleet. */
-const lanes = new WorkLanes({ concurrency: 2, queueLimit: 4 });
+/**
+ *  The route modules load on the first invocation rather than at import time.
+ *
+ *  Two reasons point the same way. Their modules read the environment assignments above when they
+ *  are first evaluated, so those assignments have to run first — which a static import would beat.
+ *  And a function entry compiled by the platform cannot carry a top-level `await`, which is what
+ *  awaiting them at import time would need. The promise is created inside the handler rather than at
+ *  module scope, so a failed load is always attached to an `await` instead of surfacing as an
+ *  unhandled rejection that kills the instance before it can answer.
+ */
+type Route = (request: Request) => Promise<Response>;
+let route: Promise<Route> | null = null;
+
+function loadRoute(): Promise<Route> {
+  route ??= (async () => {
+    const [{ WorkLanes }, { serve }] = await Promise.all([
+      import("../src/bin/work-lanes.js"),
+      import("../src/server/web-transport.js"),
+    ]);
+    // Per-instance slots, for the same reasons `src/bin/web.ts` documents. They bound one warm
+    // instance, not a fleet.
+    const lanes = new WorkLanes({ concurrency: 2, queueLimit: 4 });
+    return (request: Request) => serve({ deployment: { mode: "serverless" }, publicOrigin, lanes }, request);
+  })();
+  return route;
+}
 
 export default async function handler(request: Request): Promise<Response> {
-  return serve({ deployment: { mode: "serverless" }, publicOrigin, lanes }, request);
+  return (await loadRoute())(request);
 }
