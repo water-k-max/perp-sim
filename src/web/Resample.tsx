@@ -99,9 +99,9 @@ export function StaleNote({ fields }: { fields: string[] }) {
 }
 
 /** How much of the requested window the chain read behind these numbers actually covered. */
-export function CoverageNote({ coverage }: { coverage: FillReadCoverage }) {
+export function CoverageNote({ coverage, prominent }: { coverage: FillReadCoverage; prominent?: boolean }) {
   const stamp = fillCoverageStamp(coverage);
-  return <p className={`coverage-note tone-${stamp.tone}`} role="status" data-tone={stamp.tone}><strong>{stamp.label}.</strong> {stamp.text}</p>;
+  return <p className={`coverage-note tone-${stamp.tone}${prominent ? ' coverage-prominent' : ''}`} role="status" data-tone={stamp.tone}><strong>{stamp.label}.</strong> {stamp.text}</p>;
 }
 
 /** The random-entry null: how likely the recorded total is under uninformed timing. */

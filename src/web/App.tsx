@@ -98,13 +98,16 @@ export function App() {
         <div className="hero-copy"><p className="eyebrow">IDEAS IN. INSIGHT OUT.</p><h1 id="hero-title">Test the idea.<br /><span>Understand the cost.</span></h1><p>Explore a perpetual position through historical markets.<br className="desktop-break" /> See what price, funding, and fees do to the outcome.</p><div className="hero-tags"><span>Historical data</span><span>Transparent assumptions</span></div></div>
         <div className="hero-art" role="img" aria-label="NOVA cyan and violet shield" />
       </section>
-      <div className="workspace-heading"><h2>Your experiment</h2><span>01 / CONFIGURE &amp; SIMULATE</span></div>
-      <div className="workspace">
-        <Configuration mobile={mobile} open={setupOpen} hasResults={!!result} onEdit={() => navigateSetup(true)} onShowResults={() => navigateSetup(false)} busy={busy} error={failure?.message ?? null} onDraft={setDraft} onRun={(request, fields) => { void run(request, fields); }} onRetry={() => { if (lastRequest.current && lastFields.current) void run(lastRequest.current, lastFields.current); }} />
-        <Results onEdit={() => navigateSetup(true)} data={result} failure={failure} busy={busy} badge={badge} activity={activity} stale={stale} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
-      </div>
       <WalletPanel />
       <ImportTradesPanel />
+      <details className="hypothesis-mode">
+        <summary><span className="hypothesis-badge">HYPOTHESIS MODE</span> <span>Simulate a hypothetical position</span></summary>
+        <div className="workspace-heading"><h2>Your experiment</h2><span>03 / CONFIGURE &amp; SIMULATE</span></div>
+        <div className="workspace">
+          <Configuration mobile={mobile} open={setupOpen} hasResults={!!result} onEdit={() => navigateSetup(true)} onShowResults={() => navigateSetup(false)} busy={busy} error={failure?.message ?? null} onDraft={setDraft} onRun={(request, fields) => { void run(request, fields); }} onRetry={() => { if (lastRequest.current && lastFields.current) void run(lastRequest.current, lastFields.current); }} />
+          <Results onEdit={() => navigateSetup(true)} data={result} failure={failure} busy={busy} badge={badge} activity={activity} stale={stale} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
+        </div>
+      </details>
       <details className="panel methodology"><summary>Know what you’re measuring <span>Methodology &amp; assumptions</span></summary><div><p>This is a historical replay of a declared strategy, not a live trade. Starting cash and base-asset size are independent inputs; the market determines the quote currency.</p><p>With the trade-tape model, each order is filled against the pool’s own recorded trades inside a window that opens after the decision plus latency, capped by a share of the volume traded in that window. Nothing is executed and no order book depth is replayed, so fills are modelled, not simulated queue positions.</p><p>Ending equity reflects price PnL, signed funding, taker and maker fees, and gas. Attribution must sum to the equity change exactly; a non-zero residual is reported as a failed invariant, never rounded away. On this network the venue’s live taker and maker rates are both 0 bps, so the fee line is zero by venue policy rather than switched off in the code — the rate path is implemented and exercised against a non-zero fixture, and liquidation penalties, which this network does charge, are read and reported but not modelled in a run. Check settlement gaps, index-derived marks and candle coverage before interpreting results.</p></div></details>
     </main>
   </>;

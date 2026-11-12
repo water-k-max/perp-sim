@@ -34,6 +34,16 @@ export type AccountResample = {
   coverage: FillReadCoverage;
   distributions: DistributionBlock[];
   warnings: string[];
+  /**
+   *  Reconcile integrity: how many fills disagreed with the chain, how many had no chain
+   *  counterpart, and whether the read was fully consistent. The wallet panel shows these
+   *  beside the total so a number built on a partial or mismatched read cannot sit alone.
+   */
+  mismatches: number;
+  unmatched: number;
+  reconcileOk: boolean;
+  fillsRead: number;
+  changesReconciled: number;
 };
 
 export function accountTrades(report: ReconcileReport): { pnl: bigint }[] {
@@ -72,5 +82,10 @@ export async function resampleAccount(report: ReconcileReport, opts: AccountResa
     realizedTotal: `${neg ? "-" : ""}${whole}.${frac}`,
     coverage: report.coverage,
     distributions, warnings,
+    mismatches: report.mismatches,
+    unmatched: report.unmatched,
+    reconcileOk: report.ok,
+    fillsRead: report.fills,
+    changesReconciled: report.changes,
   };
 }

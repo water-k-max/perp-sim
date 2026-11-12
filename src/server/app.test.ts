@@ -70,6 +70,8 @@ const SHARED: Probe[] = [
   // Rejected by its own parameters, before a lane is asked for — which is the point: every probe in
   // this list is answered without a network read and without a job, on either transport.
   { label: `/api/accounts/${VALID_ADDRESS}/resample?paths=5` },
+  { label: `/api/accounts/${VALID_ADDRESS}/resample?paths=1000&cash=-5` },
+  { label: `/api/accounts/${VALID_ADDRESS}/resample?paths=1000&cash=1e3` },
   { label: "/api/accounts/not-an-address/reconcile" },
   { label: "/api/backtest", method: "POST", body: "{}" },
   { label: "/api/backtest", method: "POST", body: "5", contentType: "application/json" },
@@ -87,6 +89,17 @@ for (const probe of SHARED) {
     assert.equal(web.text, local.text, "one route must not answer with different words on the two transports");
   });
 }
+
+test("a starting cash that is not a positive amount is refused, not simulated", async () => {
+  // Bankruptcy rate is measured against this number, so a sign or a typo must not reach the
+  // walker and come back as a bust rate. Refused by parameter, before a lane or a chain read.
+  for (const cash of ["-5", "0", "abc", "1e3", ".5", "5,0"]) {
+    const { local, web } = await both({ label: `/api/accounts/${VALID_ADDRESS}/resample?paths=1000&cash=${encodeURIComponent(cash)}` });
+    assert.equal(local.status, 400, `cash=${cash} must be refused, got ${local.status}`);
+    assert.match(local.text, /cash/, `cash=${cash} refused for the wrong reason: ${local.text}`);
+    assert.equal(web.status, 400, `cash=${cash} must be refused on the deployment too`);
+  }
+});
 
 test("the body cap is enforced while streaming, not after buffering", async () => {
   const { local, web } = await both({ label: "/api/backtest", method: "POST", body: `{"cash":"${"9".repeat(30_000)}"}`, contentType: "application/json" });

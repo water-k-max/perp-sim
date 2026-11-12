@@ -232,7 +232,10 @@ export async function handle(ctx: RouteContext, req: RequestLike, res: ResponseL
     const marketSymbol = url.searchParams.get("market") ?? "BTC";
     const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 14)));
     const seed = url.searchParams.get("seed") ?? "";
-    const cash = url.searchParams.get("cash") ?? "1000";
+    const cash = (url.searchParams.get("cash") ?? "1000").trim();
+    // Starting cash is the assumption every bankruptcy rate on this page rests on, so a sign or a
+    // typo must not quietly become a path that starts at zero and reports the result as a bust rate.
+    if (!/^\d+(?:\.\d+)?$/.test(cash) || Number(cash) <= 0) { json(res, 400, { error: "cash must be a positive decimal amount." }); return; }
     // The key is the request, not the clock: two identical URLs opened seconds apart share one read
     // of a window that moves by seconds, and once the job is done the next one re-reads afresh.
     await viaLane(ctx, res, laneKey("account-resample", { account, marketSymbol, days, paths, seed, cash }), async () => {

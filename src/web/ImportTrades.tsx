@@ -76,7 +76,7 @@ export function ImportTradesPanel() {
   const failed = block?.invariants.filter(i => i.status === 'fail') ?? [];
   const changed = changedLabels(inputsOf(market, startingCash, payload, seed), ranWith, IMPORT_WATCH);
   return <section className="wallet" aria-labelledby="import-title">
-    <div className="workspace-heading"><h2 id="import-title">Import a trade list</h2><span>03 / RESAMPLE YOUR OWN FILLS</span></div>
+    <div className="workspace-heading"><h2 id="import-title">Import a trade list</h2><span>02 / RESAMPLE YOUR OWN FILLS</span></div>
     <div className="panel wallet-card">
       <div className="import-form">
         <label htmlFor="import-market">Market<select id="import-market" value={market} onChange={e => setMarket(e.target.value)}>{(markets.length ? markets : ['BTC', 'ETH', 'SOL', 'ZRO'].map(symbol => ({ symbol, quoteSymbol: 'USDso' }))).map(m => <option key={m.symbol} value={m.symbol}>{m.symbol} · {m.quoteSymbol}</option>)}</select></label>

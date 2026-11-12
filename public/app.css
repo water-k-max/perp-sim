@@ -90,7 +90,7 @@ tbody tr:nth-child(even){background:#0f172755}
 .nav-dot{box-shadow:0 0 10px var(--cyan)}
 @media(prefers-contrast:more){:root{--border:#4a5d85;--muted:#c4cee3}}
 .wallet{margin-top:32px}.wallet-card{padding:22px 24px}
-.wallet-form{display:grid;grid-template-columns:minmax(0,2.4fr) 1fr 1fr auto;gap:14px;align-items:end;margin-bottom:16px}
+.wallet-form{display:grid;grid-template-columns:minmax(0,2.4fr) 1fr 1fr 1fr auto;gap:14px;align-items:end;margin-bottom:16px}
 .wallet-form label{display:grid;gap:7px;font-size:12px;font-weight:550}
 .wallet-form .primary{width:auto;height:43px;padding:0 22px}
 .import-form{display:grid;grid-template-columns:minmax(0,2.4fr) 1fr 1fr;gap:14px;align-items:end;margin-bottom:16px}
@@ -106,6 +106,15 @@ input[aria-invalid=true]{border-color:#e0687f!important}
 .failure-raw summary{cursor:pointer;color:var(--muted)}
 .failure-raw code{display:block;margin-top:6px;padding:8px 10px;background:#0b1323;border:1px solid var(--border);border-radius:6px;color:#ffc3cf;overflow-wrap:anywhere;white-space:pre-wrap;font-family:ui-monospace,monospace}
 @media(max-width:820px){.wallet-form{grid-template-columns:1fr 1fr}.wallet-form label:first-child,.wallet-form .primary{grid-column:1/-1}}
+/* Hypothesis mode: collapsible section for the manual backtest path. */
+.hypothesis-mode{margin-top:32px;border:1px solid var(--border);border-radius:10px;background:var(--panel,#141c30);padding:0}
+.hypothesis-mode>summary{cursor:pointer;padding:16px 20px;font-size:14px;font-weight:600;list-style:none;display:flex;align-items:center;gap:12px}
+.hypothesis-mode>summary::-webkit-details-marker{display:none}
+.hypothesis-mode>summary::before{content:'▸';transition:transform .2s;font-size:12px}
+.hypothesis-mode[open]>summary::before{transform:rotate(90deg)}
+.hypothesis-badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 8px;border-radius:4px;background:#2a2548;color:#b8a9ff;border:1px solid #4a3f7a}
+.hypothesis-mode .workspace{padding:0 20px 20px}
+.hypothesis-mode .workspace-heading{margin-top:0}
 
 /* ---- design layer v3: legibility floor + touch targets ---- */
 /* Informational captions were sitting at 8–10px. Bring everything that carries meaning up to a 11px floor; pure brand decoration gets a 10px floor. SVG tick labels are already forced to 11px by the P0 `svg text` rule. */
@@ -157,6 +166,12 @@ input:not([type=checkbox]):not([type=radio]),select{height:44px}
 .coverage-note.tone-empty strong{color:var(--violet)}
 .coverage-note.tone-partial{background:#32291f;border-color:#5c4730;border-left-color:#ffd09b;color:#ffd09b}
 .coverage-note.tone-partial strong{color:#ffe7c2}
+.coverage-note.coverage-prominent{font-size:13px;padding:12px 14px;border-left-width:4px}
+/* Integrity banner: green when reconcile passed, red when mismatches or unmatched > 0. */
+.integrity-note{border:1px solid var(--border);border-left:4px solid var(--muted);border-radius:6px;padding:12px 14px;margin:12px 0;font-size:13px;line-height:1.6;background:#101a2b;color:#c6d3e9}
+.integrity-ok{border-left-color:var(--good);background:#0d1f1a}
+.integrity-fail{border-left-color:#ff6b6b;background:#2a1215;color:#ffb3b3}
+.integrity-fail strong{color:#ff6b6b}
 
 /* Metric cards now carry their definition as visible text, so the caption reads as a sentence. */
 .metric small{line-height:1.5}
