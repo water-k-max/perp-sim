@@ -142,7 +142,20 @@ jobs:
       - name: Build site and function
         run: vercel build ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN"
       - name: Deploy the build output
+        id: deploy
         run: |
           url=$(vercel deploy --prebuilt ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN")
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "## Deployed ${url}" >> "$GITHUB_STEP_SUMMARY"
+      # TEMPORARY DIAGNOSTIC — remove once the alias serves 200. The platform's function log is the
+      # only place an unhandled throw is visible, and the token needed to read it is already in this job.
+      - name: Probe the live function and dump its logs
+        if: always() && steps.deploy.outcome == 'success'
+        run: |
+          url="${{ steps.deploy.outputs.url }}"
+          echo "=== GET /api/chain on the deployment URL ==="
+          curl -sS -o /dev/null -w "status=%{http_code}\n" "https://${url}/api/chain" || true
+          echo "=== GET /api/chain on the production alias ==="
+          curl -sS -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
+          echo "=== function logs ==="
+          timeout 90 vercel inspect "${url}" --logs --token "$VERCEL_TOKEN" 2>&1 | tail -120 || true
