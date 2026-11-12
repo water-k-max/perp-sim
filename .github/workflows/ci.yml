@@ -147,20 +147,19 @@ jobs:
           url=$(vercel deploy --prebuilt ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN")
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "## Deployed ${url}" >> "$GITHUB_STEP_SUMMARY"
-      # TEMPORARY DIAGNOSTIC — remove once the alias serves 200. The platform's runtime log is the
-      # only place an unhandled throw is visible, and the token needed to read it is already in this
-      # job. `vercel inspect --logs` is the BUILD log; runtime needs `vercel logs`, and it has to be
-      # read after an invocation has actually happened, so the curl comes first.
+      # TEMPORARY DIAGNOSTIC — remove once the alias serves 200. Runtime log entries land on Vercel a
+      # few seconds after the invocation, and scoping the query to one deployment hides the request if
+      # the alias was served by a different one, so: invoke, wait, then read project-wide.
       - name: Probe the live function and dump its logs
         if: always() && steps.deploy.outcome == 'success'
         run: |
-          raw="${{ steps.deploy.outputs.url }}"
-          host="${raw#https://}"
-          echo "=== GET /api/chain on the deployment host ${host} ==="
-          curl -sS -w "\nstatus=%{http_code}\n" "https://${host}/api/chain" || true
+          echo "=== built function config ==="
+          find .vercel/output/functions -name '*.vc-config.json' -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \; || true
           echo "=== GET /api/chain on the production alias ==="
-          curl -sS -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
-          echo "=== vercel logs usage ==="
-          vercel logs --help 2>&1 | head -25 || true
-          echo "=== runtime logs ==="
-          timeout 120 vercel logs "https://${host}" --token "$VERCEL_TOKEN" 2>&1 | tail -200 || true
+          curl -sS -i -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
+          echo "=== waiting for log ingestion ==="
+          sleep 45
+          echo "=== vercel logs help ==="
+          vercel logs --help 2>&1 || true
+          echo "=== project runtime logs, last hour ==="
+          timeout 120 vercel logs --since 1h --non-interactive --token "$VERCEL_TOKEN" 2>&1 | tail -250 || true
