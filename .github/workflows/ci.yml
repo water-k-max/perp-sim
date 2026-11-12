@@ -112,11 +112,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install Vercel CLI
         run: |
-          PNPM_HOME="$(pnpm bin -g)"
-          mkdir -p "$PNPM_HOME"
+          # pnpm 12 refuses any global install until its global bin dir is already on PATH, and
+          # `pnpm bin -g` is gated on that same check, so the directory has to be chosen here
+          # rather than discovered from pnpm. Both layouts are exported because the bin dir is
+          # $PNPM_HOME on some platforms and $PNPM_HOME/bin on others.
+          export PNPM_HOME="$HOME/.pnpm-home"
+          mkdir -p "$PNPM_HOME" "$PNPM_HOME/bin"
           echo "$PNPM_HOME" >> "$GITHUB_PATH"
-          export PATH="$PNPM_HOME:$PATH"
+          echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
+          export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
           pnpm add -g vercel
+          vercel --version
       # A pull request gets a preview on its own host; a push to main is the production alias. The
       # function derives the host it accepts requests from per invocation, so nothing here has to
       # know a preview URL in advance — see api/[...all].ts.
