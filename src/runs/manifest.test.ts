@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ManifestInput } from "./manifest.js";
 import type { MarketData } from "../data/types.js";
 import type { SliceRecord, TapeSlice, TapeSource } from "../data/tape.js";
@@ -256,4 +257,19 @@ test("build captures effective inputs, normalized parameters and row data before
   assert.equal(built.runId, expected.runId);
   assert.equal(built.configSnapshot.marginBank, expected.configSnapshot.marginBank);
   assert.deepEqual(await readSnapshot(built.marketSnapshot!), await readSnapshot(expected.marketSnapshot!));
+});
+
+test("a build that shipped no source tree identifies its run by the artifact that is executing", async () => {
+  // What a serverless deployment looks like: the entry directory has no src/ to hash. Reading a
+  // missing source tree here used to reject, and because the API takes this identity at import the
+  // rejection surfaced as an unhandled error that failed every request the function received.
+  const deployed = await mkdtemp(join(root, "deployed-"));
+  const identity = await getCodeIdentity(deployed);
+  assert.match(identity.sourceHash, /^[a-f0-9]{64}$/);
+  assert.match(identity.runtime, /node:/);
+  const artifact = fileURLToPath(new URL("./manifest.ts", import.meta.url));
+  const bytes = (await readFile(artifact)).toString("base64");
+  assert.equal(identity.sourceHash, sha256([{ path: "artifact", bytes }]), "the hash is the running module's own bytes");
+  assert.notEqual(identity.sourceHash, sha256([]), "an artifact identity is not the hash of nothing");
+  assert.equal(codeIsLoaded(identity, identity), true);
 });

@@ -27,6 +27,11 @@ import { fromRaw, toRaw } from "./units.js";
 /** Shared by both API paths so the liquidation disclosure cannot drift between them. */
 const LIQUIDATION_WARNING = "Modeled maintenance breach: the position is closed at the breach price (the adverse intrabar extreme, else the settlement mark) and charged the taker fee. The market params expose no liquidation fee or liquidator fill price, so actual liquidation proceeds may differ.";
 
+/**
+ *  Captured at import, so a dev server edited underneath itself still refuses to replay. Awaited at
+ *  module scope means a throw here becomes an unhandled rejection during import, which kills every
+ *  route rather than only the replaying ones — see `getCodeIdentity` on builds with no source tree.
+ */
 const loadedCode = await getCodeIdentity();
 async function assertLoadedCode(): Promise<void> {
   if (!codeIsLoaded(await getCodeIdentity(), loadedCode)) {

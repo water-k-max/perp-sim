@@ -141,16 +141,6 @@ jobs:
       # Built here, not on the platform, so what ships is what this job's `gate` tested.
       - name: Build site and function
         run: vercel build ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN"
-      # The function crashed before its handler ever ran: the runtime log is
-      # `ENOENT: /var/task/pnpm-lock.yaml` followed by `Node.js process exited with exit status: 1`.
-      # `/var/task` is the unpacked `.func` directory, and the platform reads a lockfile from beside
-      # the entry — which `vercel build` never traces in, because nothing in the source imports it.
-      # So the deployment ships a pnpm-detected function whose own bootstrap cannot find the pnpm
-      # lockfile. Copying it in answers the read where it actually happens; it is 30 KB.
-      - name: Place the lockfile where the runtime reads it
-        run: |
-          find .vercel/output/functions -name '*.func' -type d -exec cp pnpm-lock.yaml {}/ \;
-          find .vercel/output/functions -name '*.func' -type d -exec sh -c 'echo "--- $1"; ls "$1"' _ {} \;
       - name: Deploy the build output
         id: deploy
         run: |

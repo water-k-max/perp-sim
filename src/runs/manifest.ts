@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -12,7 +12,8 @@ import type { RunResult } from "../engine/loop.js";
 import type { MarketConfig } from "../history/market.js";
 
 export type CodeIdentity = {
-  /** Hash of actual source/configuration bytes, including uncommitted changes. */
+  /** Hash of actual source/configuration bytes, including uncommitted changes; of the deployed
+   *  artifact's own bytes when the process runs from a build that shipped no source tree. */
   sourceHash: string;
   sourceCommit: string;
   runtime: string;
@@ -82,6 +83,22 @@ export function codeCommit(): string {
   return /^[0-9a-f]{7,64}$/i.test(value) ? value.toLowerCase() : "unknown";
 }
 
+/**
+ *  Whether `root` is a source checkout rather than a deployment artifact.
+ *
+ *  Only the presence of `src/` is asked about, so a checkout missing a file it should hash stays an
+ *  error instead of being silently reinterpreted as a build.
+ */
+async function isSourceCheckout(root: string): Promise<boolean> {
+  try {
+    return (await stat(join(root, "src"))).isDirectory();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
 /** Deliberately uncached: a long-lived server must see edits made between runs. */
 export async function getCodeIdentity(root = ROOT): Promise<CodeIdentity> {
   const files: string[] = [];
@@ -94,13 +111,21 @@ export async function getCodeIdentity(root = ROOT): Promise<CodeIdentity> {
       else if (entry.isFile() && (!sourceOnly || /\.(tsx?|css|html)$/.test(entry.name))) files.push(path);
     }
   }
-  await walk(join(root, "src"), true);
-  await walk(join(root, "public"), false);
-  files.push(...["package.json", "pnpm-lock.yaml", "tsconfig.json", "tsconfig.web.json"].map(name => join(root, name)));
-  const contents = await Promise.all(files.sort().map(async path => ({
-    path: relative(root, path).split("\\").join("/"),
-    bytes: (await readFile(path)).toString("base64"),
-  })));
+  let contents: { path: string; bytes: string }[];
+  if (await isSourceCheckout(root)) {
+    await walk(join(root, "src"), true);
+    await walk(join(root, "public"), false);
+    files.push(...["package.json", "pnpm-lock.yaml", "tsconfig.json", "tsconfig.web.json"].map(name => join(root, name)));
+    contents = await Promise.all(files.sort().map(async path => ({
+      path: relative(root, path).split("\\").join("/"),
+      bytes: (await readFile(path)).toString("base64"),
+    })));
+  } else {
+    // A deployment ships the compiled entry and none of the tree it was written from, so the bytes
+    // this instance actually runs are the only code there is to identify a run by. Hashing files that
+    // are not there used to reject during import, which took down every route the function served.
+    contents = [{ path: "artifact", bytes: (await readFile(fileURLToPath(import.meta.url))).toString("base64") }];
+  }
   let sourceCommit = codeCommit();
   try {
     const { stdout } = await exec("git", ["rev-parse", "HEAD"], { cwd: root, timeout: 5_000 });

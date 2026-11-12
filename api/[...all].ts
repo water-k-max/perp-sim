@@ -57,12 +57,11 @@ const publicOrigin = deploymentOrigins();
 /**
  *  The route modules load on the first invocation rather than at import time.
  *
- *  Two reasons point the same way. Their modules read the environment assignments above when they
- *  are first evaluated, so those assignments have to run first — which a static import would beat.
- *  And a function entry compiled by the platform cannot carry a top-level `await`, which is what
- *  awaiting them at import time would need. The promise is created inside the handler rather than at
- *  module scope, so a failed load is always attached to an `await` instead of surfacing as an
- *  unhandled rejection that kills the instance before it can answer.
+ *  They read the environment assignments above when they are first evaluated, so those assignments
+ *  have to run first — which a static import would beat. The promise is then created inside the
+ *  handler rather than at module scope so that a failed load is always attached to an `await`: an
+ *  import-time rejection in this graph surfaces as an unhandled error that kills the instance before
+ *  it can answer, which is exactly how one deployment served 500 on every route.
  */
 type Route = (request: Request) => Promise<Response>;
 let route: Promise<Route> | null = null;
