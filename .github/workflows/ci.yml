@@ -159,17 +159,28 @@ jobs:
       # instead of reaching the app. A 400 here proves the deep route reached the handler; a 404 is
       # the routing fault returning, and fails the job.
       - name: Probe the deployed deep routes
-        env:
-          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
         run: |
-          url="$DEPLOY_URL"
+          # The per-deployment URL (steps.deploy.outputs.url) sits behind Vercel Authentication and
+          # answers 302 to an unauthenticated curl, so it cannot be probed from here. The production
+          # alias is public, is what users actually hit, and `vercel deploy --prod` has just assigned
+          # it to this deployment. Probe the alias, retrying briefly for edge propagation.
+          url="https://perp-sim.vercel.app"
           fail=0
+          probe() {
+            local code attempt
+            for attempt in 1 2 3 4 5 6; do
+              code=$(curl -s -o /tmp/body.json -D /tmp/hdr.txt -w "%{http_code}" --max-time 60 "$url$1")
+              if [ "$code" = "$2" ]; then
+                echo "$1 -> HTTP $code (attempt $attempt)"; cat /tmp/body.json; echo; return 0
+              fi
+              echo "$1 -> HTTP $code (attempt $attempt), want $2; retry in 5s"
+              grep -i x-vercel-error /tmp/hdr.txt || true
+              sleep 5
+            done
+            echo "FAIL: $1 expected app $2, got $code"; cat /tmp/body.json; echo; return 1
+          }
           # Depth-4: paths=5 is refused by parameter validation -> app 400, not an edge 404.
-          c1=$(curl -s -o /tmp/p1.json -D /tmp/h1.txt -w "%{http_code}" --max-time 60 "$url/api/accounts/0x0000000000000000000000000000000000000000/resample?paths=5")
-          echo "depth-4 resample?paths=5 -> HTTP $c1"; cat /tmp/p1.json; echo
-          if [ "$c1" != "400" ]; then echo "FAIL: expected app 400, got $c1"; grep -i x-vercel-error /tmp/h1.txt || true; fail=1; fi
+          probe "/api/accounts/0x0000000000000000000000000000000000000000/resample?paths=5" 400 || fail=1
           # Depth-3: an invalid address is refused before any read -> app 400, not an edge 404.
-          c2=$(curl -s -o /tmp/p2.json -D /tmp/h2.txt -w "%{http_code}" --max-time 60 "$url/api/accounts/not-an-address/reconcile")
-          echo "depth-3 reconcile (bad address) -> HTTP $c2"; cat /tmp/p2.json; echo
-          if [ "$c2" != "400" ]; then echo "FAIL: expected app 400, got $c2"; grep -i x-vercel-error /tmp/h2.txt || true; fail=1; fi
+          probe "/api/accounts/not-an-address/reconcile" 400 || fail=1
           exit "$fail"

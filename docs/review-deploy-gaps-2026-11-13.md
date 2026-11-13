@@ -230,6 +230,44 @@ guards that all five export the `{ fetch }` Web-handler shape (a bare default fn
    expecting an app `400` (parameter/address refusal) and **not** the edge `404`. This is the regression
    guard G1 insisted on: a unit test cannot see routing, so the guard runs against the live alias.
 
+### Deployed verification (2026-11-13, production alias)
+
+The first CI run of the fix (`43409446553`) built and deployed green, but the new probe step failed: it
+curled the **per-deployment URL** (`perp-5xb1iqcl6-…vercel.app`), which sits behind Vercel Authentication
+and answers `302` to an unauthenticated request, so the probe never reached the app. The deployment
+itself was fine. The probe was corrected to target the **public production alias**
+`https://perp-sim.vercel.app`, which `vercel deploy --prod` assigns to the new deployment, with a short
+retry for edge propagation. Re-run locally against the alias before pushing: both probes return app
+`400` on the first attempt, exit 0.
+
+**The route table** (`cat .vercel/output/config.json`, deploy job) confirms the mechanism — each
+bracketed file compiled to its own literal route with a dynamic `([^/]+)` segment:
+
+- `^/api/accounts/([^/]+)/(resample/|resample|resample\.ts)$` → `/api/accounts/[account]/resample`
+- `^/api/accounts/([^/]+)/(reconcile/|reconcile|reconcile\.ts)$` → `/api/accounts/[account]/reconcile`
+- `^/api/runs/([^/]+)$` → `/api/runs/[id]`
+- `^/api/([^/]+)$` → `/api/[...all]` (the catch-all, now only depth-2)
+
+`api/trades/resample.ts` is a static path, so it is served from the function manifest rather than the
+`routes` array; probed live, `POST /api/trades/resample` reaches the handler (app `400`).
+
+**Live probes against the alias** (all reach the handler, none edge-404):
+
+| path | status | meaning |
+|---|---|---|
+| `GET /api/accounts/0x000…0/resample?paths=5` | 400 | depth-4 wallet route reached the app (was edge 404) |
+| `GET /api/accounts/not-an-address/reconcile` | 400 | depth-3 reconcile reached the app |
+| `POST /api/trades/resample` `{}` | 400 | depth-3 trade import reached the app |
+| `GET /api/runs/xyz` | 501 | depth-3 run read reached the app (local-disk policy) |
+| `GET /api/chain` | 200 | depth-2 catch-all still works |
+
+**The product's default action, end to end on production:**
+`GET https://perp-sim.vercel.app/api/accounts/0x8b6e…94f8/resample?market=ALL&days=7&paths=1000&cash=1000`
+→ **HTTP 200 in 17.2 s**, byte-identical to the local read: `marketsRead 40`, `marketsWithFills 13`,
+`closedTrades 417`, `realizedTotal "20868.461459000000062130"`, `fillsRead 671`, `changesReconciled 671`,
+`reconcileOk true`, 13 breakdown rows with BTC `-4343.477192000000000034`. The route that returned
+`Request failed (HTTP 404)` in the trigger screenshot now serves the cross-market aggregate.
+
 ### G2 — implemented: cross-market aggregation
 
 `replayAccountAllMarkets` ([src/verify/replay-account-all.ts](../src/verify/replay-account-all.ts)) fans
