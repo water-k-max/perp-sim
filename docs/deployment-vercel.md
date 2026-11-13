@@ -149,8 +149,9 @@ test that says "no network, no run" (`src/backtest-repro.test.ts` mocks `fetch` 
 memory instead of failing. Locally that trade is not worth taking. On a warm instance that pays three reads per
 request, 60 seconds is.
 
-**unverified** — no cache hit rate has been measured. §9 put a handful of requests through the live function, which
-is traffic but not a hit rate; the TTL's effect is still a number nobody has read.
+**unverified** — no cache hit rate has been measured. §9 has twelve consecutive `/api/chain` calls and two triples of
+identical backtests, and their timings show *something* warms, but that is traffic, not a hit rate: the TTL's actual
+effect is still a number nobody has read.
 
 ---
 
@@ -297,6 +298,18 @@ filled its market picker from the live `/api/markets` (40 options), and a submit
 price PnL `-1.1640`, funding `-0.5069`, fee `0.0`, net `-1.6709` USDso, equity 1,000.0 → 998.255 in 336 samples,
 max drawdown 0.19% — and `Export JSON` unlocked, which is the client's own signal that it holds a result. The
 viewport available for that check was 271 px wide, so it proves the flow, not the wide-layout composition.
+
+**It repeats.** Two rounds of six consecutive `/api/chain` calls: 200 every time, 0.55–0.93 s and then 0.95–2.12 s.
+The decisive one is the replay: three separate `POST /api/backtest` invocations of the same `ETH/USDso` 3-day short,
+made inside a minute of each other, returned the same 1081 bytes — sha256
+`6ff4bead8c6edba2f0b6280ae63c42bf9530601193ed2cb45847ece5ef114e5c` for all three, so the same window
+(`coverage.to=1794557958`) and the same `pnl=-15047.2358421795`, 72 bars, `gaps=0`, `complete=true` — at 14.73 s,
+then 6.66 s, then 2.12 s. That size is deliberately far outside the market's placement limits, which is what earns the
+liquidation warning in the body; the trade is bad on purpose, the digest is the point. An earlier round on the same
+build asked for a smaller ETH short three times over and got the same `pnl=3.28619341332101`, 72 bars, `gaps=0`,
+`complete=true` each time, at 2.33 s then 1.18 s then 0.87 s. Reproducible answers are the whole product, so those
+two triples are the most important lines in this section, and the shrinking timings say the caches are doing
+*something* without saying how much (§5).
 
 **Two lessons cost a production deploy each, because neither is visible from a unit test.**
 
