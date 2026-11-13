@@ -81,5 +81,14 @@ function loadRoute(): Promise<Route> {
 }
 
 export default async function handler(request: Request): Promise<Response> {
-  return (await loadRoute())(request);
+  try {
+    return await (await loadRoute())(request);
+  } catch (error) {
+    // A deployment that cannot load its routes still has to say so. Rejecting out of the handler is
+    // how one build answered every path with the platform's own `FUNCTION_INVOCATION_FAILED` and no
+    // explanation of its own; the message is the diagnosis, and it is all the platform keeps.
+    console.error("route load failed", error);
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    return Response.json({ error: "This deployment failed to load its routes.", detail }, { status: 500 });
+  }
 }

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -83,22 +83,6 @@ export function codeCommit(): string {
   return /^[0-9a-f]{7,64}$/i.test(value) ? value.toLowerCase() : "unknown";
 }
 
-/**
- *  Whether `root` is a source checkout rather than a deployment artifact.
- *
- *  Only the presence of `src/` is asked about, so a checkout missing a file it should hash stays an
- *  error instead of being silently reinterpreted as a build.
- */
-async function isSourceCheckout(root: string): Promise<boolean> {
-  try {
-    return (await stat(join(root, "src"))).isDirectory();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return false;
-    throw error;
-  }
-}
-
 /** Deliberately uncached: a long-lived server must see edits made between runs. */
 export async function getCodeIdentity(root = ROOT): Promise<CodeIdentity> {
   const files: string[] = [];
@@ -112,7 +96,7 @@ export async function getCodeIdentity(root = ROOT): Promise<CodeIdentity> {
     }
   }
   let contents: { path: string; bytes: string }[];
-  if (await isSourceCheckout(root)) {
+  try {
     await walk(join(root, "src"), true);
     await walk(join(root, "public"), false);
     files.push(...["package.json", "pnpm-lock.yaml", "tsconfig.json", "tsconfig.web.json"].map(name => join(root, name)));
@@ -120,10 +104,13 @@ export async function getCodeIdentity(root = ROOT): Promise<CodeIdentity> {
       path: relative(root, path).split("\\").join("/"),
       bytes: (await readFile(path)).toString("base64"),
     })));
-  } else {
-    // A deployment ships the compiled entry and none of the tree it was written from, so the bytes
-    // this instance actually runs are the only code there is to identify a run by. Hashing files that
-    // are not there used to reject during import, which took down every route the function served.
+  } catch (error) {
+    // Not every process runs from a checkout. A deployment ships a compiled entry, with the tree's
+    // configuration and lockfile left behind, so there is no source to hash and the bytes actually
+    // executing are the only honest identity a run can carry. Anything else — a permission failure,
+    // say — stays an error rather than being read as a build.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
     contents = [{ path: "artifact", bytes: (await readFile(fileURLToPath(import.meta.url))).toString("base64") }];
   }
   let sourceCommit = codeCommit();

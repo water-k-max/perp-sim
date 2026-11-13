@@ -144,21 +144,24 @@ jobs:
       - name: Deploy the build output
         id: deploy
         run: |
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           url=$(vercel deploy --prebuilt ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN")
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "## Deployed ${url}" >> "$GITHUB_STEP_SUMMARY"
       # TEMPORARY DIAGNOSTIC — remove once the alias serves 200. Runtime log entries land on Vercel a
       # few seconds after the invocation, and scoping the query to one deployment hides the request if
-      # the alias was served by a different one, so: invoke, wait, then read project-wide.
+      # the alias was served by a different one, so: invoke, wait, then read project-wide since this
+      # build was pushed — a 30-minute window is mostly old deployments and reads as a repeated cure.
       - name: Probe the live function and dump its logs
         if: always() && steps.deploy.outcome == 'success'
         run: |
+          echo "=== what the function bundle contains, outside node_modules ==="
+          find .vercel/output/functions -path '*node_modules*' -prune -o -type f -print | head -40
           echo "=== GET /api/chain on the production alias ==="
           curl -sS -i -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
           echo "=== waiting for log ingestion ==="
           sleep 60
-          echo "=== runtime errors, default 30m window (hobby rejects a wider one) ==="
-          # One line per entry, message head included. The raw --json stream buries the exception
-          # under per-record metadata, which is how the actual cause stayed unread for three pushes.
-          timeout 120 vercel logs --query 'level:error' --limit 30 --non-interactive --token "$VERCEL_TOKEN" 2>&1 \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const l of s.split("\n")){try{const j=JSON.parse(l);if(j.type==="log")console.log(`${j.data.requestMethod} ${j.data.requestPath} :: ${j.data.message.split("\n").slice(0,6).join(" | ")}`)}catch{}}})' || true
+          echo "=== runtime errors since this deploy ==="
+          timeout 120 vercel logs --query 'level:error' --since "${{ steps.deploy.outputs.built_at }}" \
+            --limit 30 --non-interactive --token "$VERCEL_TOKEN" 2>&1 \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let n=0;for(const l of s.split("\n")){try{const j=JSON.parse(l);if(j.type==="log"){n++;const m=j.data.message.split("\n").slice(0,4).join(" | ");console.log(`${j.data.timestamp} ${j.data.deploymentId} ${j.data.requestMethod} ${j.data.requestPath} :: ${m}`)}}catch{}}console.log(`error entries: ${n}`)})' || true

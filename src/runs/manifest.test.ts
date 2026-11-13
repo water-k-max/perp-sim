@@ -263,13 +263,22 @@ test("a build that shipped no source tree identifies its run by the artifact tha
   // What a serverless deployment looks like: the entry directory has no src/ to hash. Reading a
   // missing source tree here used to reject, and because the API takes this identity at import the
   // rejection surfaced as an unhandled error that failed every request the function received.
-  const deployed = await mkdtemp(join(root, "deployed-"));
-  const identity = await getCodeIdentity(deployed);
-  assert.match(identity.sourceHash, /^[a-f0-9]{64}$/);
-  assert.match(identity.runtime, /node:/);
   const artifact = fileURLToPath(new URL("./manifest.ts", import.meta.url));
   const bytes = (await readFile(artifact)).toString("base64");
-  assert.equal(identity.sourceHash, sha256([{ path: "artifact", bytes }]), "the hash is the running module's own bytes");
-  assert.notEqual(identity.sourceHash, sha256([]), "an artifact identity is not the hash of nothing");
-  assert.equal(codeIsLoaded(identity, identity), true);
+  const expected = sha256([{ path: "artifact", bytes }]);
+  // No source tree at all: what a single-file bundle looks like.
+  const bare = await getCodeIdentity(await mkdtemp(join(root, "deployed-")));
+  // A tree with `src/` but none of the configuration or lockfile: what a bundle that keeps the
+  // source layout looks like, which is why the fallback cannot be a one-time check for `src/`.
+  const partial = await mkdtemp(join(root, "partial-"));
+  await mkdir(join(partial, "src"), { recursive: true });
+  await writeFile(join(partial, "src", "main.ts"), "compiled");
+  const withSrc = await getCodeIdentity(partial);
+  for (const identity of [bare, withSrc]) {
+    assert.match(identity.sourceHash, /^[a-f0-9]{64}$/);
+    assert.match(identity.runtime, /node:/);
+    assert.equal(identity.sourceHash, expected, "the hash is the running module's own bytes");
+    assert.notEqual(identity.sourceHash, sha256([]), "an artifact identity is not the hash of nothing");
+    assert.equal(codeIsLoaded(identity, identity), true);
+  }
 });
