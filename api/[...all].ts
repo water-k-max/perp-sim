@@ -80,15 +80,29 @@ function loadRoute(): Promise<Route> {
   return route;
 }
 
-export default async function handler(request: Request): Promise<Response> {
-  try {
-    return await (await loadRoute())(request);
-  } catch (error) {
-    // A deployment that cannot load its routes still has to say so. Rejecting out of the handler is
-    // how one build answered every path with the platform's own `FUNCTION_INVOCATION_FAILED` and no
-    // explanation of its own; the message is the diagnosis, and it is all the platform keeps.
-    console.error("route load failed", error);
-    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-    return Response.json({ error: "This deployment failed to load its routes.", detail }, { status: 500 });
-  }
-}
+/**
+ *  Why this exports an object with a `fetch` method rather than a bare function.
+ *
+ *  The runtime reads what the entry exports and picks the calling convention from it: an export that
+ *  carries a `fetch` (or an HTTP-method) function is invoked as a Web handler — a real `Request` in, the
+ *  returned `Response` written to the socket. Anything else, a default-exported async function included,
+ *  is invoked the legacy way as `(req, res)`, which hands it `node:http`'s message — whose `headers` is a
+ *  plain object with no `forEach` — and discards the `Response` handed back. Nothing is then ever
+ *  written, so each route holds its slot until `maxDuration` ends it with a 504: the build that looked
+ *  alive and dead at once. `fetch` also covers every method, where each named method would have to be
+ *  declared separately.
+ */
+export default {
+  async fetch(request: Request): Promise<Response> {
+    try {
+      return await (await loadRoute())(request);
+    } catch (error) {
+      // A deployment that cannot answer a request still has to say why. Rejecting out of the handler is
+      // how one build answered every path with the platform's own `FUNCTION_INVOCATION_FAILED` and no
+      // explanation of its own; the message is the diagnosis, and it is all the platform keeps.
+      console.error("request failed", error);
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      return Response.json({ error: "This deployment failed to handle the request.", detail }, { status: 500 });
+    }
+  },
+};

@@ -155,12 +155,13 @@ jobs:
       - name: Probe the live function and dump its logs
         if: always() && steps.deploy.outcome == 'success'
         run: |
-          echo "=== what the function bundle contains, outside node_modules ==="
-          find .vercel/output/functions -path '*node_modules*' -prune -o -type f -print | head -40
-          echo "=== GET /api/chain on the production alias ==="
-          curl -sS -i -w "\nstatus=%{http_code}\n" "https://perp-sim.vercel.app/api/chain" || true
+          for path in /api/chain /api/markets /; do
+            printf "=== %s -> " "$path"
+            curl -sS -o /dev/null -w "%{http_code} in %{time_total}s\n" --max-time 90 \
+              -H 'accept: application/json' "https://perp-sim.vercel.app$path" || true
+          done
           echo "=== waiting for log ingestion ==="
-          sleep 60
+          sleep 45
           echo "=== runtime errors since this deploy ==="
           timeout 120 vercel logs --query 'level:error' --since "${{ steps.deploy.outputs.built_at }}" \
             --limit 30 --non-interactive --token "$VERCEL_TOKEN" 2>&1 \
