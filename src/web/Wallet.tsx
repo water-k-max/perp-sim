@@ -32,7 +32,7 @@ function parse(value: unknown): Wallet {
 const inputsOf = (address: string, market: string, days: string, cash: string) => ({ address: address.trim(), market: market.trim() || 'ALL', days, cash: cash.trim() || '1000' });
 const WALLET_WATCH = { address: 'Address', market: 'Market', days: 'Window', cash: 'Starting cash' };
 
-export function WalletPanel() {
+export function WalletPanel({ preset }: { preset?: { address: string; days: string; nonce: number } | null }) {
   const [address, setAddress] = useState('');
   const [market, setMarket] = useState('ALL');
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -58,10 +58,24 @@ export function WalletPanel() {
     return () => { cancelled = true; };
   }, []);
 
-  async function run() {
-    if (!valid || !cashValid || busy) return;
+  // A leaderboard "Verify" click presets the address and window and runs the ALL-market replay, so
+  // the net ranking is corroborated by the same reconcile over the same window. The nonce lets a
+  // second click on the same address run again.
+  useEffect(() => {
+    if (!preset) return;
+    setAddress(preset.address);
+    setDays(preset.days);
+    setMarket('ALL');
+    void run({ address: preset.address, market: 'ALL', days: preset.days });
+  }, [preset?.nonce]);
+
+  async function run(override?: { address: string; market: string; days: string }) {
+    const addr = (override?.address ?? address).trim();
+    const mkt = override?.market ?? market;
+    const win = override?.days ?? days;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr) || !cashValid || busy) return;
     setBusy(true); setError(null);
-    const sent = inputsOf(address, market, days, cash);
+    const sent = inputsOf(addr, mkt, win, cash);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120000);
     try {

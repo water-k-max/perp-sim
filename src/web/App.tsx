@@ -28,6 +28,7 @@ export function App() {
   const [setupOpen, setSetupOpen] = useState(true);
   const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 650px)').matches);
   const [network, setNetwork] = useState<ChainReport | null | undefined>(undefined);
+  const [picked, setPicked] = useState<{ address: string; days: string; nonce: number } | null>(null);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 650px)');
     const update = () => setMobile(query.matches);
@@ -99,8 +100,8 @@ export function App() {
         <div className="hero-copy"><p className="eyebrow">IDEAS IN. INSIGHT OUT.</p><h1 id="hero-title">Test the idea.<br /><span>Understand the cost.</span></h1><p>Explore a perpetual position through historical markets.<br className="desktop-break" /> See what price, funding, and fees do to the outcome.</p><div className="hero-tags"><span>Historical data</span><span>Transparent assumptions</span></div></div>
         <div className="hero-art" role="img" aria-label="NOVA cyan and violet shield" />
       </section>
-      <LeaderboardPanel />
-      <WalletPanel />
+      <LeaderboardPanel onPick={(address, days) => { setPicked({ address, days, nonce: Date.now() }); requestAnimationFrame(() => document.getElementById('wallet-title')?.scrollIntoView({ block: 'start' })); }} />
+      <WalletPanel preset={picked} />
       <ImportTradesPanel />
       <details className="hypothesis-mode">
         <summary><span className="hypothesis-badge">HYPOTHESIS MODE</span> <span>Simulate a hypothetical position</span></summary>

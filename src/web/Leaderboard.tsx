@@ -38,7 +38,7 @@ const sign = (v: string) => (Number(v) < 0 ? 'negative' : Number(v) > 0 ? 'posit
  *  own column, a truncated read called partial, the vacuous-zero warning, a `review` row's reasons —
  *  can be pinned offline against a fixture board, the same way the resample panel's caveats are.
  */
-export function BoardView({ board }: { board: Board }) {
+export function BoardView({ board, onPick }: { board: Board; onPick?: (address: string) => void }) {
   const flagged = board.rows.filter(r => r.warnings.length > 0);
   return <>
     <p className={`coverage-note ${board.discovery.truncated ? 'tone-partial' : 'tone-complete'}`}>
@@ -54,7 +54,9 @@ export function BoardView({ board }: { board: Board }) {
             <thead><tr><th className="num">#</th><th>Account</th><th className="num">Net</th><th className="num">Gross</th><th className="num">Funding paid</th><th className="num">Trade fees</th><th className="num">Liquidation</th><th className="num">Closes</th><th className="num">Markets</th><th>Check</th></tr></thead>
             <tbody>{board.rows.map(r => <tr key={r.account}>
               <td className="num">{r.rank}</td>
-              <td><code className="lb-account" title={r.account}>{r.account}</code></td>
+              <td>{onPick
+                ? <button type="button" className="lb-account lb-pick" title={`Verify ${r.account} across all markets over this window`} onClick={() => onPick(r.account)}>{r.account}</button>
+                : <code className="lb-account" title={r.account}>{r.account}</code>}</td>
               <td className={`num ${sign(r.net)}`}>{amount(r.net)}</td>
               <td className={`num ${sign(r.gross)}`}>{amount(r.gross)}</td>
               <td className="num">{amount(r.fundingPaid)}</td>
@@ -78,7 +80,7 @@ export function BoardView({ board }: { board: Board }) {
  *  click, never on mount. Every limit that can shorten the answer — discovery truncation, the
  *  account cap, a per-account leg cap, an unrecognised fee kind — is surfaced, not hidden.
  */
-export function LeaderboardPanel() {
+export function LeaderboardPanel({ onPick }: { onPick?: (address: string, days: string) => void }) {
   const [days, setDays] = useState('7');
   const [maxAccounts, setMaxAccounts] = useState('50');
   const [busy, setBusy] = useState(false);
@@ -116,7 +118,7 @@ export function LeaderboardPanel() {
       </div>
       <p className="error" role="alert" hidden={error === null}>{error}</p>
       {result && <StaleNote fields={changed} />}
-      {result && <BoardView board={result} />}
+      {result && <BoardView board={result} onPick={onPick ? (addr) => onPick(addr, ranWith?.days ?? days) : undefined} />}
     </div>
   </section>;
 }

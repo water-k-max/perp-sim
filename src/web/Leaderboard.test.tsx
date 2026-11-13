@@ -135,3 +135,17 @@ test("the panel states the net formula, the separate liquidation rail, and that 
   assert.ok(markup.includes("Rank traders"), "the read runs on an explicit click");
   assert.ok(!markup.includes("<table"), "no heavy venue read fires on mount");
 });
+
+test("with onPick wired each account is a Verify button; without it, plain code and no dead button", () => {
+  const picked = renderToStaticMarkup(<BoardView board={board()} onPick={() => {}} />);
+  assert.equal(picked.split("<button").length - 1, 3, "one clickable account per ranked row");
+  assert.ok(picked.includes("lb-pick"), "the account cell is the verify affordance");
+  assert.ok(picked.includes(`title="Verify ${A} across all markets over this window"`), "the button says what clicking does");
+  assert.ok(rowOf(picked, A).includes(`>${A}</button>`), "the full address is the click target, not a truncated label");
+  assert.ok(!picked.includes('<code class="lb-account" title='), "the account cell is a button, not inert code");
+
+  const plain = renderToStaticMarkup(<BoardView board={board()} />);
+  assert.ok(plain.includes('<code class="lb-account" title='), "standalone board keeps the address as plain code");
+  assert.ok(!plain.includes("lb-pick"), "no verify button when onPick is absent");
+  assert.ok(!plain.includes("<button"), "no dead click target without a handler");
+});
