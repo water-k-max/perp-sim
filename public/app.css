@@ -210,3 +210,17 @@ svg#chart:focus-visible{outline-offset:2px}
 .market-breakdown>p{margin:0 0 10px}
 .market-breakdown th.num{text-align:right}
 .market-breakdown td:first-child{font-weight:600}
+
+/* Net realized leaderboard: the discovery entry point above the wallet replay. Reuses the shared
+   table, td.num, positive/negative, coverage-note and warnings styles; only the form rhythm, the
+   monospace account cell and the card padding are new. */
+.leaderboard{margin-top:32px}
+.leaderboard-card{padding:22px 24px}
+.leaderboard-form{display:grid;grid-template-columns:1fr 1fr auto;gap:14px;align-items:end;margin-bottom:16px}
+.leaderboard-form label{display:grid;gap:7px;font-size:12px;font-weight:550}
+.leaderboard-form .primary{width:auto;height:44px;padding:0 22px}
+.leaderboard table{min-width:900px}
+.leaderboard th.num{text-align:right}
+.leaderboard .warnings{margin-top:12px}
+.lb-account{font-family:ui-monospace,monospace;font-size:11px}
+@media(max-width:820px){.leaderboard-form{grid-template-columns:1fr 1fr}.leaderboard-form .primary{grid-column:1/-1}}

@@ -8,6 +8,7 @@ import { canonical, listDatasets, sha256 } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
 import { replayAccountAllMarkets } from "../verify/replay-account-all.js";
+import { buildLeaderboard } from "../verify/leaderboard.js";
 import { resampleStoredRun } from "../resample/service.js";
 import { resampleAccount } from "../resample/account.js";
 import { parseResampleRequest } from "../resample/analysis.js";
@@ -197,6 +198,27 @@ export async function handle(ctx: RouteContext, req: RequestLike, res: ResponseL
   if (req.method === "GET" && url.pathname === "/api/markets") {
     try { json(res, 200, await listMarkets()); }
     catch (error) { console.error("Market discovery failed:", error instanceof Error ? error.message : "Unknown error"); json(res, 502, { error: "Market list unavailable. The static market choices remain usable. Details are in the server log." }); }
+    return;
+  }
+
+  // The net realized leaderboard: discover the accounts that closed positions in the window and rank
+  // them by gross minus funding minus trade fees. A heavy venue-wide read, so it takes a lane like the
+  // wallet paths; the window and the account cap are the request, so two identical URLs share one read.
+  if (req.method === "GET" && url.pathname === "/api/leaderboard") {
+    const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 7)));
+    const maxAccounts = Math.min(100, Math.max(1, Number(url.searchParams.get("maxAccounts") ?? 50)));
+    if (!Number.isInteger(days) || !Number.isInteger(maxAccounts)) { json(res, 400, { error: "days and maxAccounts must be whole numbers." }); return; }
+    await viaLane(ctx, res, laneKey("leaderboard", { days, maxAccounts }), async () => {
+      try {
+        const client = createClient().client;
+        const to = Math.floor(Date.now() / 1000);
+        const board = await buildLeaderboard({ client, fromSec: to - days * 86_400, toSec: to, maxAccounts });
+        return { status: 200, body: board };
+      } catch (error) {
+        console.error("Leaderboard failed:", error instanceof Error ? error.message : "Unknown error");
+        return { status: 422, body: { error: "Leaderboard read failed." } };
+      }
+    });
     return;
   }
 

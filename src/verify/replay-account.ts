@@ -442,7 +442,7 @@ function accountSide(fill: FillRow, account: string): "buy" | "sell" {
 }
 
 /** A fee row signed as a cost: `Fee` debits, `Rebate` credits. */
-function signedFee(fee: PerpFeeRecord): bigint {
+export function signedFee(fee: PerpFeeRecord): bigint {
   const amount = BigInt(fee.amount);
   return fee.isRebate ? -amount : amount;
 }

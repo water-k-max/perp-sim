@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Configuration, watchFields, type ConfigFields } from './Configuration.js';
 import { WalletPanel } from './Wallet.js';
+import { LeaderboardPanel } from './Leaderboard.js';
 import { ImportTradesPanel } from './ImportTrades.js';
 import { Results } from './Results.js';
 import { ChainBadge } from './ChainBadge.js';
@@ -98,6 +99,7 @@ export function App() {
         <div className="hero-copy"><p className="eyebrow">IDEAS IN. INSIGHT OUT.</p><h1 id="hero-title">Test the idea.<br /><span>Understand the cost.</span></h1><p>Explore a perpetual position through historical markets.<br className="desktop-break" /> See what price, funding, and fees do to the outcome.</p><div className="hero-tags"><span>Historical data</span><span>Transparent assumptions</span></div></div>
         <div className="hero-art" role="img" aria-label="NOVA cyan and violet shield" />
       </section>
+      <LeaderboardPanel />
       <WalletPanel />
       <ImportTradesPanel />
       <details className="hypothesis-mode">
