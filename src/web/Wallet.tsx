@@ -32,7 +32,10 @@ function parse(value: unknown): Wallet {
 const inputsOf = (address: string, market: string, days: string, cash: string) => ({ address: address.trim(), market: market.trim() || 'ALL', days, cash: cash.trim() || '1000' });
 const WALLET_WATCH = { address: 'Address', market: 'Market', days: 'Window', cash: 'Starting cash' };
 
-export function WalletPanel({ preset }: { preset?: { address: string; days: string; nonce: number } | null }) {
+/** The leaderboard row a "Mirror" click came from: the net rank the copy-sim must not be mistaken for. */
+export type MirrorContext = { rank: number; net: string; gross: string; fundingPaid: string };
+
+export function WalletPanel({ preset }: { preset?: { address: string; days: string; nonce: number; mirror?: MirrorContext } | null }) {
   const [address, setAddress] = useState('');
   const [market, setMarket] = useState('ALL');
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -42,6 +45,7 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Wallet | null>(null);
   const [ranWith, setRanWith] = useState<ReturnType<typeof inputsOf> | null>(null);
+  const [mirror, setMirror] = useState<MirrorContext | null>(null);
   // The server refuses anything but a positive decimal, and this panel is the only thing that
   // would have to explain the refusal, so the button knows the rule before it sends.
   const cashValid = /^\d+(?:\.\d+)?$/.test(cash.trim()) && Number(cash.trim()) > 0;
@@ -59,13 +63,15 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
   }, []);
 
   // A leaderboard "Verify" click presets the address and window and runs the ALL-market replay, so
-  // the net ranking is corroborated by the same reconcile over the same window. The nonce lets a
-  // second click on the same address run again.
+  // the net ranking is corroborated by the same reconcile over the same window. A "Mirror" click also
+  // carries the row's net context, which frames the distributions as an in-sample copy-sim. The nonce
+  // lets a second click on the same address run again.
   useEffect(() => {
     if (!preset) return;
     setAddress(preset.address);
     setDays(preset.days);
     setMarket('ALL');
+    setMirror(preset.mirror ?? null);
     void run({ address: preset.address, market: 'ALL', days: preset.days });
   }, [preset?.nonce]);
 
@@ -74,6 +80,7 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
     const mkt = override?.market ?? market;
     const win = override?.days ?? days;
     if (!/^0x[0-9a-fA-F]{40}$/.test(addr) || !cashValid || busy) return;
+    if (!override) setMirror(null);
     setBusy(true); setError(null);
     const sent = inputsOf(addr, mkt, win, cash);
     const controller = new AbortController();
@@ -114,6 +121,7 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
       {result && <IntegrityBanner result={result} quote={quote} cash={ranWith?.cash ?? cash} scope={scope} />}
       {result && <CoverageNote coverage={result.coverage} prominent />}
       {result?.markets && <MarketTable rows={result.markets} quote={quote} marketsRead={result.marketsRead} />}
+      {result && mirror && dist && <CopySimNote mirror={mirror} account={result.account} closedTrades={result.closedTrades} quote={quote} cash={ranWith?.cash ?? cash} />}
       {result && (dist ? <>
         <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : d.mode.startsWith('block') ? 'Block boot.' : 'Bootstrap'}</span></label>)}</div>
         <FanChart dist={dist} quote={quote} original={[]} />
@@ -161,4 +169,21 @@ function IntegrityBanner({ result, quote, cash, scope }: { result: Wallet; quote
     return <p className="integrity-note integrity-ok" role="status">Reconcile passed {scope}: {result.changesReconciled.toLocaleString()} changes across {result.fillsRead.toLocaleString()} fills, no disagreements. Starting cash assumed at {amount(cash)} {quote}.</p>;
   }
   return <p className="integrity-note integrity-fail" role="alert">Reconcile found {result.mismatches} mismatch(es) and {result.unmatched} unmatched fill(s) out of {result.fillsRead.toLocaleString()} reads {scope}. The totals below rest on a partial or disputed read.</p>;
+}
+
+/**
+ *  The copy-sim lens. A "Mirror" click resamples the trader's realized closes as if they were yours,
+ *  through the same gross-PnL resampler the wallet always runs — no new engine. The banner's job is to
+ *  stop the net rank being mistaken for the copy: it is in-sample, it mirrors gross trade PnL only (not
+ *  the funding or fees that set the net rank), and it assumes you match the trader's size on every close.
+ */
+export function CopySimNote({ mirror, account, closedTrades, quote, cash }: { mirror: MirrorContext; account: string; closedTrades: number; quote: string; cash: string }) {
+  const short = `${account.slice(0, 6)}…${account.slice(-4)}`;
+  const fundingDroveNet = Number(mirror.fundingPaid) < 0 && Number(mirror.net) > Number(mirror.gross);
+  return <div className="copy-sim-note" id="copy-sim" role="note">
+    <h3>Copy-sim · mirroring <code className="lb-account">{short}</code> <span className="muted">(rank #{mirror.rank} by net)</span></h3>
+    <p>Resamples this trader's {closedTrades.toLocaleString()} realized closes into new trade orders. <strong>In-sample</strong> — it models trade-order risk on their past, not a forecast of future returns or of what copying them would yield.</p>
+    <p>Mirrors <strong>gross trade PnL only</strong> ({amount(mirror.gross)} {quote}). Their net rank ({amount(mirror.net)} {quote}) also includes funding ({amount(mirror.fundingPaid)} {quote} paid; a negative figure is received) and trade fees, which a copy does not replicate.{fundingDroveNet ? " Funding received — not trading — lifted this trader's net above their gross; mirroring their trades would not reproduce that income." : ''}</p>
+    <p>Assumes you match their position size on every close, so your PnL per close equals theirs. Your starting cash ({amount(cash)} {quote}) is the buffer the bankruptcy rate is measured against.</p>
+  </div>;
 }

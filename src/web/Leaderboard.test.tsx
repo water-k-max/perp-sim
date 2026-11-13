@@ -149,3 +149,17 @@ test("with onPick wired each account is a Verify button; without it, plain code 
   assert.ok(!plain.includes("lb-pick"), "no verify button when onPick is absent");
   assert.ok(!plain.includes("<button"), "no dead click target without a handler");
 });
+
+test("with onMirror each row carries a Mirror button; without it none — and it is independent of Verify", () => {
+  const mirrored = renderToStaticMarkup(<BoardView board={board()} onMirror={() => {}} />);
+  assert.equal(mirrored.split("lb-mirror").length - 1, 3, "one Mirror button per ranked row");
+  assert.ok(mirrored.includes(`title="Mirror ${B}: copy-sim their realized closes against your starting cash"`), "the button says what mirroring does");
+  assert.ok(rowOf(mirrored, B).includes(">Mirror</button>"), "the Mirror button sits in the row of the trader it copies");
+  assert.ok(mirrored.includes('<code class="lb-account" title='), "onMirror alone keeps the address plain code; Verify is a separate affordance");
+
+  const both = renderToStaticMarkup(<BoardView board={board()} onPick={() => {}} onMirror={() => {}} />);
+  assert.equal(both.split("<button").length - 1, 6, "Verify + Mirror per row when both are wired");
+
+  const plain = renderToStaticMarkup(<BoardView board={board()} />);
+  assert.ok(!plain.includes("lb-mirror"), "no Mirror button without a handler");
+});
