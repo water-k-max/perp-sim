@@ -72,6 +72,9 @@ const SHARED: Probe[] = [
   { label: `/api/accounts/${VALID_ADDRESS}/resample?paths=5` },
   { label: `/api/accounts/${VALID_ADDRESS}/resample?paths=1000&cash=-5` },
   { label: `/api/accounts/${VALID_ADDRESS}/resample?paths=1000&cash=1e3` },
+  // `market=ALL` takes the aggregation branch, but parameter refusal happens before it: a bad cash
+  // must be refused on the ALL path exactly as on a single market, on both transports, with no read.
+  { label: `/api/accounts/${VALID_ADDRESS}/resample?market=ALL&paths=1000&cash=-5` },
   { label: "/api/accounts/not-an-address/reconcile" },
   { label: "/api/backtest", method: "POST", body: "{}" },
   { label: "/api/backtest", method: "POST", body: "5", contentType: "application/json" },

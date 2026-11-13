@@ -7,6 +7,7 @@ import { onceLive } from "../data/live-cache.js";
 import { canonical, listDatasets, sha256 } from "../data/store.js";
 import { listRuns, loadRun } from "../runs/store.js";
 import { reconcileAccount } from "../verify/replay-account.js";
+import { replayAccountAllMarkets } from "../verify/replay-account-all.js";
 import { resampleStoredRun } from "../resample/service.js";
 import { resampleAccount } from "../resample/account.js";
 import { parseResampleRequest } from "../resample/analysis.js";
@@ -241,11 +242,19 @@ export async function handle(ctx: RouteContext, req: RequestLike, res: ResponseL
     await viaLane(ctx, res, laneKey("account-resample", { account, marketSymbol, days, paths, seed, cash }), async () => {
       try {
         const client = createClient().client;
+        const to = Math.floor(Date.now() / 1000);
+        const fromSec = to - days * 86_400;
+        // `market=ALL` reconciles every listed market and aggregates; the single-market path below is
+        // unchanged. The lane key already carries marketSymbol, so the two never share a run.
+        if (marketSymbol.trim().toUpperCase() === "ALL") {
+          const portfolio = await replayAccountAllMarkets({ client, account, fromSec, toSec: to });
+          const body = await resampleAccount(portfolio.input, { paths, seed, start: toRaw(cash, portfolio.quoteDecimals), quoteDecimals: portfolio.quoteDecimals, quoteSymbol: portfolio.quoteSymbol });
+          return { status: 200, body: { ...body, markets: portfolio.markets, marketsRead: portfolio.marketsRead, marketsWithFills: portfolio.marketsWithFills } };
+        }
         const selected = selectMarket(await onceLive("perp-markets", () => listPerps(client)), marketSymbol);
         const market = await onceLive(`perp-config:${selected.poolAddress}`, () => resolveConfig(client, selected));
-        const to = Math.floor(Date.now() / 1000);
-        const report = await reconcileAccount({ client, cfg: market, account, fromSec: to - days * 86_400, toSec: to });
-        return { status: 200, body: await resampleAccount(report, { paths, seed, start: toRaw(cash, market.quoteDecimals), quoteDecimals: market.quoteDecimals }) };
+        const report = await reconcileAccount({ client, cfg: market, account, fromSec, toSec: to });
+        return { status: 200, body: await resampleAccount(report, { paths, seed, start: toRaw(cash, market.quoteDecimals), quoteDecimals: market.quoteDecimals, quoteSymbol: market.quoteSymbol }) };
       } catch (error) {
         console.error("Account resample failed:", error instanceof Error ? error.message : "Unknown error");
         return { status: 422, body: { error: "Account resample failed." } };

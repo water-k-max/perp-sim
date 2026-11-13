@@ -201,3 +201,12 @@ svg#chart:focus-visible{outline-offset:2px}
 .region[data-state=mismatch]{color:#ffc3cf}
 .region[data-state=pending] i{background:var(--muted);animation:chain-pulse 1.2s ease-in-out infinite}
 @keyframes chain-pulse{50%{opacity:.3}}
+
+/* Cross-market breakdown: the per-market contributions behind an `ALL` wallet total. Reuses the
+   shared table, td.num and positive/negative styles; only the wrapper rhythm and numeric headers
+   are new. */
+.market-breakdown{margin:16px 0}
+.market-breakdown h3{font-size:13px;font-weight:600;margin:0 0 6px}
+.market-breakdown>p{margin:0 0 10px}
+.market-breakdown th.num{text-align:right}
+.market-breakdown td:first-child{font-weight:600}

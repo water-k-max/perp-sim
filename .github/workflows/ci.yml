@@ -141,9 +141,35 @@ jobs:
       # Built here, not on the platform, so what ships is what this job's `gate` tested.
       - name: Build site and function
         run: vercel build ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN"
+      # The deployed catch-all matched only one path segment, so every depth>=3 API path 404'd at
+      # the edge while depth-2 worked. This is the route table Vercel actually generated from api/:
+      # it shows whether the per-route function files now cover the deep wallet paths, and is the
+      # instrument that confirms the routing mechanism rather than guessing at it.
+      - name: Show the generated route table
+        run: cat .vercel/output/config.json
       - name: Deploy the build output
         id: deploy
         run: |
           url=$(vercel deploy --prebuilt ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN")
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "## Deployed ${url}" >> "$GITHUB_STEP_SUMMARY"
+      # G1 regression guard. Both probes are answered by the handler before any chain read, so they
+      # are deterministic and do not couple the deploy to indexer availability. Before the per-route
+      # function files existed, these depth>=3 paths 404'd at the edge (X-Vercel-Error: NOT_FOUND)
+      # instead of reaching the app. A 400 here proves the deep route reached the handler; a 404 is
+      # the routing fault returning, and fails the job.
+      - name: Probe the deployed deep routes
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          url="$DEPLOY_URL"
+          fail=0
+          # Depth-4: paths=5 is refused by parameter validation -> app 400, not an edge 404.
+          c1=$(curl -s -o /tmp/p1.json -D /tmp/h1.txt -w "%{http_code}" --max-time 60 "$url/api/accounts/0x0000000000000000000000000000000000000000/resample?paths=5")
+          echo "depth-4 resample?paths=5 -> HTTP $c1"; cat /tmp/p1.json; echo
+          if [ "$c1" != "400" ]; then echo "FAIL: expected app 400, got $c1"; grep -i x-vercel-error /tmp/h1.txt || true; fail=1; fi
+          # Depth-3: an invalid address is refused before any read -> app 400, not an edge 404.
+          c2=$(curl -s -o /tmp/p2.json -D /tmp/h2.txt -w "%{http_code}" --max-time 60 "$url/api/accounts/not-an-address/reconcile")
+          echo "depth-3 reconcile (bad address) -> HTTP $c2"; cat /tmp/p2.json; echo
+          if [ "$c2" != "400" ]; then echo "FAIL: expected app 400, got $c2"; grep -i x-vercel-error /tmp/h2.txt || true; fail=1; fi
+          exit "$fail"

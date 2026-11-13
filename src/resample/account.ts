@@ -17,12 +17,25 @@ export type AccountResampleOptions = {
   seed: string;
   start: bigint;
   quoteDecimals: number;
+  /** The quote unit every amount on this result is denominated in; the panel labels totals with it. */
+  quoteSymbol: string;
   sizing?: SizingMode;
 };
+
+/**
+ *  The fields `resampleAccount` actually reads. A single-market `ReconcileReport` satisfies it, and
+ *  so does the cross-market aggregate — which has no single pool's fee block to carry, so it is
+ *  built from exactly these fields rather than a synthetic report with invented fee rates.
+ */
+export type AccountReplayInput = Pick<
+  ReconcileReport,
+  "account" | "market" | "fromSec" | "toSec" | "rows" | "coverage" | "warnings" | "mismatches" | "unmatched" | "ok" | "fills" | "changes"
+>;
 
 export type AccountResample = {
   account: string;
   market: string;
+  quoteSymbol: string;
   closedTrades: number;
   openingFills: number;
   winRateBps: number;
@@ -46,11 +59,11 @@ export type AccountResample = {
   changesReconciled: number;
 };
 
-export function accountTrades(report: ReconcileReport): { pnl: bigint }[] {
+export function accountTrades(report: AccountReplayInput): { pnl: bigint }[] {
   return report.rows.filter((r) => r.actual.closedSize > 0n).map((r) => ({ pnl: r.actual.realizedPnl }));
 }
 
-export async function resampleAccount(report: ReconcileReport, opts: AccountResampleOptions): Promise<AccountResample> {
+export async function resampleAccount(report: AccountReplayInput, opts: AccountResampleOptions): Promise<AccountResample> {
   const trades = accountTrades(report);
   const scale = 10n ** BigInt(opts.quoteDecimals);
   const seed = opts.seed === "" ? sha256(`account-resample/${report.account.toLowerCase()}/${report.market}/${report.fromSec}/${report.toSec}`) : opts.seed;
@@ -76,7 +89,7 @@ export async function resampleAccount(report: ReconcileReport, opts: AccountResa
   const whole = abs / scale;
   const frac = (abs % scale).toString().padStart(opts.quoteDecimals, "0");
   return {
-    account: report.account, market: report.market, closedTrades: trades.length,
+    account: report.account, market: report.market, quoteSymbol: opts.quoteSymbol, closedTrades: trades.length,
     openingFills: report.rows.length - trades.length,
     winRateBps: trades.length === 0 ? 0 : Math.round((wins * 10_000) / trades.length),
     realizedTotal: `${neg ? "-" : ""}${whole}.${frac}`,

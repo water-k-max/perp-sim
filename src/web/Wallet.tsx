@@ -5,26 +5,36 @@ import { parseCoverage, type FillReadCoverage } from '../verify/fill-coverage.js
 
 type FanBand = { step: number; p10: string; p25: string; p50: string; p75: string; p90: string };
 type Dist = { mode: string; paths: number; median: string; p05: string; p95: string; cvar95: string; bankruptcyRate: string; medianMaxDrawdownBps: number; medianMaxLosingStreak: number; finalEquities: string[]; fan: FanBand[] };
-type Wallet = { account: string; market: string; closedTrades: number; winRateBps: number; realizedTotal: string; coverage: FillReadCoverage; distributions: Dist[]; warnings: string[]; mismatches: number; unmatched: number; reconcileOk: boolean; fillsRead: number; changesReconciled: number };
+type MarketRow = { market: string; pool: string; fills: number; closedTrades: number; openingFills: number; winRateBps: number; realizedTotal: string; mismatches: number; unmatched: number; ok: boolean; coverage: FillReadCoverage };
+type Wallet = { account: string; market: string; quoteSymbol: string; closedTrades: number; winRateBps: number; realizedTotal: string; coverage: FillReadCoverage; distributions: Dist[]; warnings: string[]; mismatches: number; unmatched: number; reconcileOk: boolean; fillsRead: number; changesReconciled: number; markets?: MarketRow[]; marketsRead?: number; marketsWithFills?: number };
 
 const num = (v: unknown) => typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v));
+const int = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 function parse(value: unknown): Wallet {
-  if (!record(value) || typeof value.account !== 'string' || !Number.isInteger(value.closedTrades) || !Number.isInteger(value.winRateBps) || !num(value.realizedTotal) || !Array.isArray(value.distributions) || !Array.isArray(value.warnings) || !Number.isInteger(value.mismatches) || !Number.isInteger(value.unmatched) || typeof value.reconcileOk !== 'boolean' || !Number.isInteger(value.fillsRead) || !Number.isInteger(value.changesReconciled)) throw new Error('Unexpected response.');
+  if (!record(value) || typeof value.account !== 'string' || typeof value.quoteSymbol !== 'string' || !int(value.closedTrades) || !int(value.winRateBps) || !num(value.realizedTotal) || !Array.isArray(value.distributions) || !Array.isArray(value.warnings) || !int(value.mismatches) || !int(value.unmatched) || typeof value.reconcileOk !== 'boolean' || !int(value.fillsRead) || !int(value.changesReconciled)) throw new Error('Unexpected response.');
   parseCoverage(value.coverage);
   for (const d of value.distributions as unknown[]) {
-    if (!record(d) || typeof d.mode !== 'string' || !Number.isInteger(d.paths) || !num(d.median) || !num(d.p05) || !num(d.p95) || !num(d.cvar95) || !num(d.bankruptcyRate) || !Array.isArray(d.finalEquities) || !(d.finalEquities as unknown[]).every(num)) throw new Error('Unexpected response.');
-    if (!Array.isArray(d.fan) || !(d.fan as unknown[]).every(b => record(b) && Number.isInteger(b.step) && num(b.p10) && num(b.p25) && num(b.p50) && num(b.p75) && num(b.p90))) throw new Error('Unexpected response.');
+    if (!record(d) || typeof d.mode !== 'string' || !int(d.paths) || !num(d.median) || !num(d.p05) || !num(d.p95) || !num(d.cvar95) || !num(d.bankruptcyRate) || !Array.isArray(d.finalEquities) || !(d.finalEquities as unknown[]).every(num)) throw new Error('Unexpected response.');
+    if (!Array.isArray(d.fan) || !(d.fan as unknown[]).every(b => record(b) && int(b.step) && num(b.p10) && num(b.p25) && num(b.p50) && num(b.p75) && num(b.p90))) throw new Error('Unexpected response.');
+  }
+  // The cross-market breakdown is present only on an `ALL` read; a single-market response omits it.
+  if (value.markets !== undefined) {
+    if (!Array.isArray(value.markets) || !int(value.marketsRead) || !int(value.marketsWithFills)) throw new Error('Unexpected response.');
+    for (const m of value.markets as unknown[]) {
+      if (!record(m) || typeof m.market !== 'string' || typeof m.pool !== 'string' || !int(m.fills) || !int(m.closedTrades) || !int(m.openingFills) || !int(m.winRateBps) || !num(m.realizedTotal) || !int(m.mismatches) || !int(m.unmatched) || typeof m.ok !== 'boolean') throw new Error('Unexpected response.');
+      parseCoverage(m.coverage);
+    }
   }
   return value as unknown as Wallet;
 }
 
 /** The read the panel performs for these form values — the same shape decides what is stale. */
-const inputsOf = (address: string, market: string, days: string, cash: string) => ({ address: address.trim(), market: market.trim() || 'BTC', days, cash: cash.trim() || '1000' });
+const inputsOf = (address: string, market: string, days: string, cash: string) => ({ address: address.trim(), market: market.trim() || 'ALL', days, cash: cash.trim() || '1000' });
 const WALLET_WATCH = { address: 'Address', market: 'Market', days: 'Window', cash: 'Starting cash' };
 
 export function WalletPanel() {
   const [address, setAddress] = useState('');
-  const [market, setMarket] = useState('BTC');
+  const [market, setMarket] = useState('ALL');
   const [markets, setMarkets] = useState<Market[]>([]);
   const [days, setDays] = useState('14');
   const [cash, setCash] = useState('1000');
@@ -32,7 +42,6 @@ export function WalletPanel() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Wallet | null>(null);
   const [ranWith, setRanWith] = useState<ReturnType<typeof inputsOf> | null>(null);
-  const [quote, setQuote] = useState('USDso');
   // The server refuses anything but a positive decimal, and this panel is the only thing that
   // would have to explain the refusal, so the button knows the rule before it sends.
   const cashValid = /^\d+(?:\.\d+)?$/.test(cash.trim()) && Number(cash.trim()) > 0;
@@ -43,7 +52,8 @@ export function WalletPanel() {
     fetchMarkets().then(next => {
       if (cancelled) return;
       setMarkets(next);
-      setMarket(old => next.some(m => m.symbol === old) ? old : next[0].symbol);
+      // `ALL` is a scope, not a listed symbol, so the market list must not reset it to a single market.
+      setMarket(old => old === 'ALL' || next.some(m => m.symbol === old) ? old : next[0].symbol);
     }).catch(() => { /* Static choices remain available offline. */ });
     return () => { cancelled = true; };
   }, []);
@@ -59,7 +69,6 @@ export function WalletPanel() {
       const response = await fetch(`/api/accounts/${sent.address}/resample?${query}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(record(payload) && typeof payload.error === 'string' ? payload.error : `Request failed (HTTP ${response.status}).`);
-      setQuote(markets.find(m => m.symbol === sent.market)?.quoteSymbol ?? 'USDso');
       setResult(parse(payload));
       setRanWith(sent);
     } catch (err) {
@@ -70,28 +79,35 @@ export function WalletPanel() {
   const dist = result?.distributions.find(d => d.mode === mode) ?? result?.distributions[0];
   const changed = changedLabels(inputsOf(address, market, days, cash), ranWith, WALLET_WATCH);
   const integrityBad = result && (!result.reconcileOk || result.mismatches > 0 || result.unmatched > 0);
+  // The cash field labels the unit the form will send; the result notes label the unit the server
+  // actually returned, which on an `ALL` read is the shared quote unit of every market with fills.
+  const formQuote = market === 'ALL' ? (markets[0]?.quoteSymbol ?? 'USDso') : (markets.find(m => m.symbol === market)?.quoteSymbol ?? 'USDso');
+  const quote = result?.quoteSymbol ?? formQuote;
+  const isAll = result?.market === 'ALL';
+  const scope = isAll ? 'across all markets' : `in ${result?.market ?? market}`;
   return <section className="wallet" aria-labelledby="wallet-title">
     <div className="workspace-heading"><h2 id="wallet-title">Analyse a wallet</h2><span>01 / RESAMPLE REAL FILLS</span></div>
     <div className="panel wallet-card">
       <div className="wallet-form">
         <label htmlFor="wallet-address">Address<input id="wallet-address" value={address} onChange={e => setAddress(e.target.value)} placeholder="0x…" spellCheck={false} autoComplete="off" aria-invalid={address !== '' && !valid} aria-describedby="wallet-address-help" /><small id="wallet-address-help" className="field-help">0x prefix + 40 hex characters.</small></label>
-        <label htmlFor="wallet-market">Market<select id="wallet-market" value={market} onChange={e => setMarket(e.target.value)}>{(markets.length ? markets : ['BTC', 'ETH', 'SOL', 'ZRO'].map(symbol => ({ symbol, quoteSymbol: 'USDso' }))).map(m => <option key={m.symbol} value={m.symbol}>{m.symbol} · {m.quoteSymbol}</option>)}</select></label>
+        <label htmlFor="wallet-market">Market<select id="wallet-market" value={market} onChange={e => setMarket(e.target.value)}><option value="ALL">All markets</option>{(markets.length ? markets : ['BTC', 'ETH', 'SOL', 'ZRO'].map(symbol => ({ symbol, quoteSymbol: 'USDso' }))).map(m => <option key={m.symbol} value={m.symbol}>{m.symbol} · {m.quoteSymbol}</option>)}</select></label>
         <label htmlFor="wallet-days">Window<select id="wallet-days" value={days} onChange={e => setDays(e.target.value)}><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select></label>
-        <label htmlFor="wallet-cash">Starting cash <span className="muted">({quote})</span><input id="wallet-cash" value={cash} onChange={e => setCash(e.target.value)} inputMode="decimal" pattern="[0-9]+([.][0-9]+)?" spellCheck={false} autoComplete="off" aria-invalid={!cashValid} aria-describedby="wallet-cash-help" /><small id="wallet-cash-help" className="field-help">Assumed balance the bust rate is measured against.</small></label>
+        <label htmlFor="wallet-cash">Starting cash <span className="muted">({formQuote})</span><input id="wallet-cash" value={cash} onChange={e => setCash(e.target.value)} inputMode="decimal" pattern="[0-9]+([.][0-9]+)?" spellCheck={false} autoComplete="off" aria-invalid={!cashValid} aria-describedby="wallet-cash-help" /><small id="wallet-cash-help" className="field-help">Assumed balance the bust rate is measured against.</small></label>
         <button type="button" className="primary" disabled={!valid || !cashValid || busy} onClick={() => void run()}>{busy ? 'Reading fills…' : 'Resample'}</button>
       </div>
       <p className="error" role="alert" hidden={error === null}>{error}</p>
       {result && <StaleNote fields={changed} />}
-      {result && <IntegrityBanner result={result} quote={quote} cash={ranWith?.cash ?? cash} />}
+      {result && <IntegrityBanner result={result} quote={quote} cash={ranWith?.cash ?? cash} scope={scope} />}
       {result && <CoverageNote coverage={result.coverage} prominent />}
+      {result?.markets && <MarketTable rows={result.markets} quote={quote} marketsRead={result.marketsRead} />}
       {result && (dist ? <>
         <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : d.mode.startsWith('block') ? 'Block boot.' : 'Bootstrap'}</span></label>)}</div>
         <FanChart dist={dist} quote={quote} original={[]} />
         <ShuffleNote mode={dist.mode} p05={dist.p05} p95={dist.p95} />
         <div className="metrics">
-          <Stat label="Closed trades" value={String(result.closedTrades)} note="Closing fills the chain recorded for this address in the window. Opens carry no realized PnL and are skipped." />
-          <Stat label="Win rate" value={`${number(result.winRateBps / 100, 1)}%`} note="Share of those closes with a positive gross realized PnL." />
-          <Stat label="Replayed total" value={amount(result.realizedTotal)} note={`Sum of the replayed realized PnL per closing fill, in ${quote} — fees and funding are not deducted. ${integrityBad ? `Mismatches: ${result.mismatches}, unmatched: ${result.unmatched}.` : `Reconciled ${result.changesReconciled} changes across ${result.fillsRead} fills with no disagreements.`}`} />
+          <Stat label="Closed trades" value={String(result.closedTrades)} note={`Closing fills the chain recorded for this address ${scope} in the window. Opens carry no realized PnL and are skipped.`} />
+          <Stat label="Win rate" value={`${number(result.winRateBps / 100, 1)}%`} note="Share of those closes with a positive gross realized PnL. A trader who scales out of one winner books several winning closes, so this can overstate the share of round-trip trades that won." />
+          <Stat label="Replayed total" value={amount(result.realizedTotal)} note={`Sum of the replayed realized PnL per closing fill ${scope}, in ${quote} — fees and funding are not deducted. ${integrityBad ? `Mismatches: ${result.mismatches}, unmatched: ${result.unmatched}.` : `Reconciled ${result.changesReconciled} changes across ${result.fillsRead} fills with no disagreements.`}`} />
           <Stat label="Median final" value={amount(dist.median)} note={DIST_NOTES.medianFinal(dist.paths, quote)} />
           <Stat label="p05 / p95" value={`${amount(dist.p05)} / ${amount(dist.p95)}`} note={DIST_NOTES.p05p95} />
           <Stat label="CVaR 95" value={amount(dist.cvar95)} note={DIST_NOTES.cvar95} />
@@ -99,15 +115,36 @@ export function WalletPanel() {
           <Stat label="Median max drawdown" value={`${number(dist.medianMaxDrawdownBps / 100, 1)}%`} note={DIST_NOTES.drawdown} />
         </div>
         <Histogram values={dist.finalEquities.map(Number)} label="Final equity" />
-      </> : <p className="muted">No closed trades in this window.</p>)}
+      </> : <p className="muted">No closed trades {scope} in this window.</p>)}
     </div>
   </section>;
 }
 
+/** Where the aggregate total came from: each market's own verified read, largest gross realized first. */
+function MarketTable({ rows, quote, marketsRead }: { rows: MarketRow[]; quote: string; marketsRead?: number }) {
+  return <div className="market-breakdown">
+    <h3>Per-market breakdown</h3>
+    <p className="muted">{rows.length} market{rows.length === 1 ? '' : 's'} with fills{marketsRead !== undefined ? ` of ${marketsRead} listed` : ''}, largest gross realized first. Each row is the same verified read the single-market view performs; the total above sums them.</p>
+    <div className="table-wrap">
+      <table>
+        <thead><tr><th>Market</th><th className="num">Fills</th><th className="num">Closed</th><th className="num">Win rate</th><th className="num">Gross realized ({quote})</th><th>Check</th></tr></thead>
+        <tbody>{rows.map(m => <tr key={m.market}>
+          <td>{m.market}</td>
+          <td className="num">{m.fills.toLocaleString()}</td>
+          <td className="num">{m.closedTrades.toLocaleString()}</td>
+          <td className="num">{number(m.winRateBps / 100, 1)}%</td>
+          <td className={`num ${Number(m.realizedTotal) < 0 ? 'negative' : 'positive'}`}>{amount(m.realizedTotal)}</td>
+          <td>{m.ok && m.mismatches === 0 && m.unmatched === 0 ? <span className="positive">ok</span> : <span className="negative">{m.mismatches} mismatch / {m.unmatched} unmatched</span>}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
 /** The integrity banner: red when the reconcile found disagreements, amber when coverage is partial. */
-function IntegrityBanner({ result, quote, cash }: { result: Wallet; quote: string; cash: string }) {
+function IntegrityBanner({ result, quote, cash, scope }: { result: Wallet; quote: string; cash: string; scope: string }) {
   if (result.reconcileOk && result.mismatches === 0 && result.unmatched === 0) {
-    return <p className="integrity-note integrity-ok" role="status">Reconcile passed: {result.changesReconciled.toLocaleString()} changes across {result.fillsRead.toLocaleString()} fills, no disagreements. Starting cash assumed at {amount(cash)} {quote}.</p>;
+    return <p className="integrity-note integrity-ok" role="status">Reconcile passed {scope}: {result.changesReconciled.toLocaleString()} changes across {result.fillsRead.toLocaleString()} fills, no disagreements. Starting cash assumed at {amount(cash)} {quote}.</p>;
   }
-  return <p className="integrity-note integrity-fail" role="alert">Reconcile found {result.mismatches} mismatch(es) and {result.unmatched} unmatched fill(s) out of {result.fillsRead.toLocaleString()} reads. The totals below rest on a partial or disputed read.</p>;
+  return <p className="integrity-note integrity-fail" role="alert">Reconcile found {result.mismatches} mismatch(es) and {result.unmatched} unmatched fill(s) out of {result.fillsRead.toLocaleString()} reads {scope}. The totals below rest on a partial or disputed read.</p>;
 }

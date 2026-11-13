@@ -24,7 +24,7 @@ const report = (pnls: bigint[]): ReconcileReport => ({
     liquidation: { rows: 0, total: 0n }, unknown: { rows: 0, total: 0n, kinds: [] }, byKind: [],
   }, ok: true, warnings: [],
 });
-const opts = { paths: 200, seed: "", start: 1_000_000_000n, quoteDecimals: 6 };
+const opts = { paths: 200, seed: "", start: 1_000_000_000n, quoteDecimals: 6, quoteSymbol: "USDso" };
 
 test("opening fills are excluded from the trade list", () => {
   assert.equal(accountTrades(report([5n, -3n])).length, 2);
