@@ -260,8 +260,9 @@ put them there is the reasoning a reader needs next time.
 - ~~No invocation has run on the platform.~~ §9 has platform latency for four routes and one real backtest.
   **Still missing: cold start, memory headroom, behaviour under concurrent load, and the plan's instance ceiling** —
   none of that is measurable from one request at a time.
-- ~~The static shell is proven reachable in tests, not in a browser pointed at a hosted URL.~~ It is served; a
-  browser driven against the live alias is the remaining half.
+- ~~The static shell is proven reachable in tests, not in a browser pointed at a hosted URL.~~ It is served, and a
+  browser driven at the live alias completed a real run (§9). **Still missing: the pixels** — the surface available
+  here rendered at a 271 px content width, so the wide layout has been read structurally, not looked at.
 - Nothing persists between requests on a deployment. The run store is local-only by policy, and the UI hides what
   it cannot do. **observed** — the two 501s say so in those words on the live host.
 - The live cache is a 60-second TTL with no observed hit rate. Two invocations of a route ten seconds apart is not
@@ -289,6 +290,13 @@ settlement-mark entry is not a book fill.*
 
 **The refusals travel.** `GET /api/runs` and `POST /api/resample` both answer 501 on the deployment with exactly the
 sentence §3 writes for them. A cross-origin `POST /api/backtest` is refused 403.
+
+**The page runs the real thing.** A browser pointed at the alias booted with no console errors or warnings at all,
+filled its market picker from the live `/api/markets` (40 options), and a submitted form came back
+`RUN COMPLETE`: BTC/USDso long 0.00013 over 14 days, entry `78,130.253846153846153846`, exit `69,176.3066342789155`,
+price PnL `-1.1640`, funding `-0.5069`, fee `0.0`, net `-1.6709` USDso, equity 1,000.0 → 998.255 in 336 samples,
+max drawdown 0.19% — and `Export JSON` unlocked, which is the client's own signal that it holds a result. The
+viewport available for that check was 271 px wide, so it proves the flow, not the wide-layout composition.
 
 **Two lessons cost a production deploy each, because neither is visible from a unit test.**
 
