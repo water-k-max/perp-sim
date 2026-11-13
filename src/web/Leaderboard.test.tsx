@@ -79,13 +79,16 @@ test("the board ranks by NET, not gross: funding drops the gross winner to last"
   assert.ok(rowA.indexOf(">10.000000<") < rowA.indexOf(">100.000000<"), "the net column precedes the gross column");
 });
 
-test("liquidation is shown in its own column and never folded into net", () => {
+test("liquidation is never folded into net and is reported as a row warning, not a column", () => {
   const markup = renderToStaticMarkup(<BoardView board={board()} />);
   const rowC = rowOf(markup, C);
   assert.ok(rowC.includes(">30.000000<"), "C net equals its 30 gross — the 5 liquidation penalty is not deducted");
-  assert.ok(rowC.includes(">5.000000<"), "the liquidation penalty appears in its own column");
+  assert.ok(!rowC.includes(">5.000000<"), "the liquidation penalty is not a table cell");
+  assert.ok(!markup.includes(">Liquidation<"), "no liquidation column header");
+  assert.ok(!markup.includes(">Trade fees<"), "no trade-fees column header");
   assert.ok(rowC.includes(">ok<"), "a known liquidation rail does not fail the row closed");
   assert.ok(markup.includes("shown separately and not deducted from net"), "C's liquidation warning is listed, not hidden in a tooltip");
+  assert.ok(markup.includes("totalling 5000000"), "the warning carries the penalty total");
 });
 
 test("a truncated discovery read is called partial, not a complete census", () => {

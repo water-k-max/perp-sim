@@ -86,3 +86,22 @@ test("an empty account reports zero closes and no cadence, not a fabricated temp
   assert.equal(out.tempo.medianGapSec, null);
   assert.equal(out.tempo.activeSpanSec, null);
 });
+
+test("a high-fill account clamps paths to the work budget instead of refusing the read", async () => {
+  const horizon = 3000;
+  const pnls = Array.from({ length: horizon }, (_, i) => (i % 2 === 0 ? 1_000_000n : -500_000n));
+  const out = await resampleAccount(report(pnls), { ...opts, paths: 1000 });
+  const expected = Math.floor(2_000_000 / horizon);
+  assert.ok(out.distributions.length > 0, "the read must succeed, not throw");
+  for (const d of out.distributions) {
+    assert.equal(d.paths, expected);
+    assert.ok(d.paths * horizon <= 2_000_000, "clamped paths must respect the step ceiling");
+  }
+  assert.ok(out.warnings.some((w) => w.includes("Paths reduced from 1000")), "the reduction must be disclosed");
+});
+
+test("a small account keeps the requested path count (clamp does not bind)", async () => {
+  const out = await resampleAccount(report([5_000_000n, -2_000_000n, 3_000_000n]), opts);
+  for (const d of out.distributions) assert.equal(d.paths, opts.paths);
+  assert.ok(!out.warnings.some((w) => w.includes("Paths reduced")), "no clamp note when nothing was clamped");
+});

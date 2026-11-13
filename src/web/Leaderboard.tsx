@@ -51,7 +51,7 @@ export function BoardView({ board, onPick, onMirror }: { board: Board; onPick?: 
         <p className="muted">All amounts in {board.quoteSymbol}. Ranked by net realized, largest first; ties break by gross then address.</p>
         <div className="table-wrap">
           <table>
-            <thead><tr><th className="num">#</th><th>Account</th><th className="num">Net</th><th className="num">Gross</th><th className="num">Funding paid</th><th className="num">Trade fees</th><th className="num">Liquidation</th><th className="num">Closes</th><th className="num">Markets</th><th>Check</th></tr></thead>
+            <thead><tr><th className="num">#</th><th>Account</th><th className="num">Net</th><th className="num">Gross</th><th className="num">Funding paid</th><th className="num">Closes</th><th className="num">Markets</th><th>Check</th></tr></thead>
             <tbody>{board.rows.map(r => <tr key={r.account}>
               <td className="num">{r.rank}</td>
               <td className="lb-account-cell">{onPick
@@ -61,8 +61,6 @@ export function BoardView({ board, onPick, onMirror }: { board: Board; onPick?: 
               <td className={`num ${sign(r.net)}`}>{amount(r.net)}</td>
               <td className={`num ${sign(r.gross)}`}>{amount(r.gross)}</td>
               <td className="num">{amount(r.fundingPaid)}</td>
-              <td className="num">{amount(r.tradeFees)}</td>
-              <td className="num">{amount(r.liquidationFees)}</td>
               <td className="num">{r.closes.toLocaleString()}</td>
               <td className="num">{r.markets.toLocaleString()}</td>
               <td>{r.ok ? <span className="positive">ok</span> : <span className="negative">review</span>}</td>

@@ -279,7 +279,7 @@ export async function handle(ctx: RouteContext, req: RequestLike, res: ResponseL
         return { status: 200, body: await resampleAccount(report, { paths, seed, start: toRaw(cash, market.quoteDecimals), quoteDecimals: market.quoteDecimals, quoteSymbol: market.quoteSymbol }) };
       } catch (error) {
         console.error("Account resample failed:", error instanceof Error ? error.message : "Unknown error");
-        return { status: 422, body: { error: "Account resample failed." } };
+        return { status: 422, body: { error: `Account resample failed: ${error instanceof Error ? error.message : "Unknown error"}` } };
       }
     });
     return;

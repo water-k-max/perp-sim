@@ -7,7 +7,7 @@
  */
 import type { ReconcileReport } from "../verify/replay-account.js";
 import type { FillReadCoverage } from "../verify/fill-coverage.js";
-import { simulatePaths, type SizingMode } from "./path.js";
+import { RESAMPLE_WORK_MAX, simulatePaths, type SizingMode } from "./path.js";
 import { summarizePaths } from "./stats.js";
 import { distributionBlock, type DistributionBlock } from "./analysis.js";
 import { sha256 } from "../data/store.js";
@@ -71,6 +71,9 @@ export function accountTrades(report: AccountReplayInput): { pnl: bigint }[] {
 
 export async function resampleAccount(report: AccountReplayInput, opts: AccountResampleOptions): Promise<AccountResample> {
   const trades = accountTrades(report);
+  // A high-fill account can exceed the step ceiling at the requested path count; clamp to the budget
+  // instead of refusing the whole read, and disclose it — the distributions carry the effective count.
+  const paths = trades.length > 0 ? Math.min(opts.paths, Math.max(1, Math.floor(RESAMPLE_WORK_MAX / trades.length))) : opts.paths;
   const closingTimes = report.rows.filter((r) => r.actual.closedSize > 0n).map((r) => r.t);
   const tempo = tempoOf(closingTimes, report.fromSec, report.toSec);
   const scale = 10n ** BigInt(opts.quoteDecimals);
@@ -81,14 +84,15 @@ export async function resampleAccount(report: AccountReplayInput, opts: AccountR
     ...report.warnings,
   ];
   if (trades.length < 30) warnings.push(`Only ${trades.length} closed trades: percentiles over so few observations are wide and unstable.`);
+  if (paths < opts.paths) warnings.push(`Paths reduced from ${opts.paths} to ${paths} to stay within the ${RESAMPLE_WORK_MAX}-step work budget for ${trades.length} closes; percentiles rest on fewer paths.`);
   const wins = trades.filter((t) => t.pnl > 0n).length;
   const distributions: DistributionBlock[] = [];
   if (trades.length > 0) {
     for (const mode of ["shuffle_without_replacement", "bootstrap_with_replacement", "block_bootstrap_with_replacement"] as const) {
-      const paths = await simulatePaths({
-        trades, mode, sizing: opts.sizing ?? "static", paths: opts.paths, horizon: trades.length, start: opts.start, seed,
+      const walked = await simulatePaths({
+        trades, mode, sizing: opts.sizing ?? "static", paths, horizon: trades.length, start: opts.start, seed,
       });
-      distributions.push(distributionBlock(mode, summarizePaths(paths, scale), opts.quoteDecimals));
+      distributions.push(distributionBlock(mode, summarizePaths(walked, scale), opts.quoteDecimals));
     }
   }
   const total = trades.reduce((s, t) => s + t.pnl, 0n);

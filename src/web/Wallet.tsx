@@ -34,6 +34,8 @@ function parse(value: unknown): Wallet {
 /** The read the panel performs for these form values — the same shape decides what is stale. */
 const inputsOf = (address: string, market: string, days: string, cash: string) => ({ address: address.trim(), market: market.trim() || 'ALL', days, cash: cash.trim() || '1000' });
 const WALLET_WATCH = { address: 'Address', market: 'Market', days: 'Window', cash: 'Starting cash' };
+/** The path count this panel requests; the server clamps it to the work budget for high-fill accounts. */
+const WALLET_PATHS = 1000;
 
 /** The leaderboard row a "Mirror" click came from: the net rank the copy-sim must not be mistaken for. */
 export type MirrorContext = { rank: number; net: string; gross: string; fundingPaid: string };
@@ -89,7 +91,7 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120000);
     try {
-      const query = new URLSearchParams({ market: sent.market, days: sent.days, paths: '1000', cash: sent.cash });
+      const query = new URLSearchParams({ market: sent.market, days: sent.days, paths: String(WALLET_PATHS), cash: sent.cash });
       const response = await fetch(`/api/accounts/${sent.address}/resample?${query}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(record(payload) && typeof payload.error === 'string' ? payload.error : `Request failed (HTTP ${response.status}).`);
@@ -129,6 +131,7 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
       {result && mirror && dist && <CopySimNote mirror={mirror} account={result.account} closedTrades={result.closedTrades} quote={quote} cash={ranWith?.cash ?? cash} />}
       {result && (dist ? <>
         <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : d.mode.startsWith('block') ? 'Block boot.' : 'Bootstrap'}</span></label>)}</div>
+        {dist.paths < WALLET_PATHS && <p className="muted">Paths reduced to {dist.paths.toLocaleString()} (from {WALLET_PATHS.toLocaleString()}) to stay within the resample work budget for this account's {result.closedTrades.toLocaleString()} closes; percentiles rest on fewer paths.</p>}
         <FanChart dist={dist} quote={quote} original={[]} />
         <ShuffleNote mode={dist.mode} p05={dist.p05} p95={dist.p95} />
         <div className="metrics">
