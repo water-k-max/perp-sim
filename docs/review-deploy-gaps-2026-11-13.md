@@ -268,6 +268,25 @@ bracketed file compiled to its own literal route with a dynamic `([^/]+)` segmen
 `reconcileOk true`, 13 breakdown rows with BTC `-4343.477192000000000034`. The route that returned
 `Request failed (HTTP 404)` in the trigger screenshot now serves the cross-market aggregate.
 
+**CI green, guard included** (`43410709046`, commit `56f4c5f`, 2026-11-13 ~10:42Z): all three jobs
+passed — offline gate 1m41s, live read-only chain check 25s, vercel deploy 1m20s. The deploy aliased
+`perp-262n67tf5-…vercel.app` → `https://perp-sim.vercel.app` (`▲ Aliased` in the deploy log), and the
+**probe step itself** then returned app `400` on the first attempt for both deep routes
+(`resample?paths=5` → `{"error":"paths must be a whole number from 100 to 5000."}`;
+`not-an-address/reconcile` → `{"error":"A 0x-prefixed 20-byte account address is required."}`). The G1
+regression guard now passes *inside CI*, not only in the local pre-push check.
+
+**Deployed UI, driven end to end in the browser** (production alias, not localhost): filled
+`0x8b6e…94f8`, left "All markets", set Window 7 days / cash 1000, clicked Resample. The accessibility
+snapshot shows the integrity banner ("Reconcile passed **across all markets**: 671 changes across 671
+fills, no disagreements"), the full-window coverage note (671 fills across 13 pages, 2026-11-06 15:43 →
+2026-11-09 09:34 UTC), the **Per-market breakdown** table with all 13 ranked rows (ZRO +14,330.049 …
+BTC −4,343.477), closed trades 417, win rate 28.8%, replayed total **20,868.461459000000062130**,
+bankruptcy 0.2% — every value matching the curl read. The panel that showed `Request failed (HTTP 404)`
+in the trigger screenshot now renders the cross-market aggregate on the live site. *Same limitation as
+the local run:* the pixel screenshot was blocked (`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`), so styling was
+not eyeballed; the structural snapshot is the evidence.
+
 ### G2 — implemented: cross-market aggregation
 
 `replayAccountAllMarkets` ([src/verify/replay-account-all.ts](../src/verify/replay-account-all.ts)) fans

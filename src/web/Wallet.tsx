@@ -110,8 +110,9 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
   const isAll = result?.market === 'ALL';
   const scope = isAll ? 'across all markets' : `in ${result?.market ?? market}`;
   return <section className="wallet" aria-labelledby="wallet-title">
-    <div className="workspace-heading"><h2 id="wallet-title">Analyse a wallet</h2><span>01 / RESAMPLE REAL FILLS</span></div>
+    <div className="workspace-heading"><h2 id="wallet-title">Analyse a wallet</h2><span>01 / VERIFY, RESAMPLE &amp; MIRROR</span></div>
     <div className="panel wallet-card">
+      <p className="muted intro">Reconcile this address against the chain across every market it traded, resample its realized closes into an equity distribution, and read its tempo and style. Mirror a leaderboard trader to copy-sim their closes against your starting cash. This lens is gross trade PnL — the leaderboard above ranks net of funding and fees.</p>
       <div className="wallet-form">
         <label htmlFor="wallet-address">Address<input id="wallet-address" value={address} onChange={e => setAddress(e.target.value)} placeholder="0x…" spellCheck={false} autoComplete="off" aria-invalid={address !== '' && !valid} aria-describedby="wallet-address-help" /><small id="wallet-address-help" className="field-help">0x prefix + 40 hex characters.</small></label>
         <label htmlFor="wallet-market">Market<select id="wallet-market" value={market} onChange={e => setMarket(e.target.value)}><option value="ALL">All markets</option>{(markets.length ? markets : ['BTC', 'ETH', 'SOL', 'ZRO'].map(symbol => ({ symbol, quoteSymbol: 'USDso' }))).map(m => <option key={m.symbol} value={m.symbol}>{m.symbol} · {m.quoteSymbol}</option>)}</select></label>
