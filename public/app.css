@@ -235,4 +235,11 @@ svg#chart:focus-visible{outline-offset:2px}
 .copy-sim-note p{margin:0 0 8px}
 .copy-sim-note p:last-child{margin-bottom:0}
 .copy-sim-note strong{color:var(--text)}
+/* Trading-style lens: descriptive tempo + style over the wallet read. Same note rhythm as copy-sim;
+   cyan marks it as a descriptive read of the trader's own closes, not a modelled simulation. */
+.tempo-note{background:#101a2b;border:1px solid var(--border);border-left:3px solid var(--cyan);border-radius:6px;padding:12px 14px;margin:14px 0;font-size:12px;line-height:1.6;color:#c6d3e9}
+.tempo-note h3{font-size:13px;margin:0 0 8px;color:var(--text)}
+.tempo-note p{margin:0 0 8px}
+.tempo-note p:last-child{margin-bottom:0}
+.tempo-note strong{color:var(--text)}
 @media(max-width:820px){.leaderboard-form{grid-template-columns:1fr 1fr}.leaderboard-form .primary{grid-column:1/-1}}

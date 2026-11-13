@@ -11,6 +11,7 @@ import { simulatePaths, type SizingMode } from "./path.js";
 import { summarizePaths } from "./stats.js";
 import { distributionBlock, type DistributionBlock } from "./analysis.js";
 import { sha256 } from "../data/store.js";
+import { tempoOf, type Tempo } from "../verify/tempo.js";
 
 export type AccountResampleOptions = {
   paths: number;
@@ -41,6 +42,11 @@ export type AccountResample = {
   winRateBps: number;
   realizedTotal: string;
   /**
+   *  Descriptive cadence of the closes: how often this trader realized a position over the window.
+   *  Inter-close tempo, not holding time — the fill read does not match opens to closes.
+   */
+  tempo: Tempo;
+  /**
    *  What the fill read actually covered. The distributions describe these fills, so a
    *  truncated read has to be visible next to them rather than only inside the warnings.
    */
@@ -65,6 +71,8 @@ export function accountTrades(report: AccountReplayInput): { pnl: bigint }[] {
 
 export async function resampleAccount(report: AccountReplayInput, opts: AccountResampleOptions): Promise<AccountResample> {
   const trades = accountTrades(report);
+  const closingTimes = report.rows.filter((r) => r.actual.closedSize > 0n).map((r) => r.t);
+  const tempo = tempoOf(closingTimes, report.fromSec, report.toSec);
   const scale = 10n ** BigInt(opts.quoteDecimals);
   const seed = opts.seed === "" ? sha256(`account-resample/${report.account.toLowerCase()}/${report.market}/${report.fromSec}/${report.toSec}`) : opts.seed;
   const warnings = [
@@ -93,6 +101,7 @@ export async function resampleAccount(report: AccountReplayInput, opts: AccountR
     openingFills: report.rows.length - trades.length,
     winRateBps: trades.length === 0 ? 0 : Math.round((wins * 10_000) / trades.length),
     realizedTotal: `${neg ? "-" : ""}${whole}.${frac}`,
+    tempo,
     coverage: report.coverage,
     distributions, warnings,
     mismatches: report.mismatches,

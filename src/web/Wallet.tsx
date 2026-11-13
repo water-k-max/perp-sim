@@ -2,16 +2,19 @@ import { useEffect, useState } from 'react';
 import { amount, changedLabels, fetchMarkets, number, record, type Market } from './dto.js';
 import { DIST_NOTES, CoverageNote, Histogram, FanChart, Stat, ShuffleNote, StaleNote } from './Resample.js';
 import { parseCoverage, type FillReadCoverage } from '../verify/fill-coverage.js';
+import { classifyCadence, classifyStyle, fmtGap, type Tempo } from '../verify/tempo.js';
 
 type FanBand = { step: number; p10: string; p25: string; p50: string; p75: string; p90: string };
 type Dist = { mode: string; paths: number; median: string; p05: string; p95: string; cvar95: string; bankruptcyRate: string; medianMaxDrawdownBps: number; medianMaxLosingStreak: number; finalEquities: string[]; fan: FanBand[] };
 type MarketRow = { market: string; pool: string; fills: number; closedTrades: number; openingFills: number; winRateBps: number; realizedTotal: string; mismatches: number; unmatched: number; ok: boolean; coverage: FillReadCoverage };
-type Wallet = { account: string; market: string; quoteSymbol: string; closedTrades: number; winRateBps: number; realizedTotal: string; coverage: FillReadCoverage; distributions: Dist[]; warnings: string[]; mismatches: number; unmatched: number; reconcileOk: boolean; fillsRead: number; changesReconciled: number; markets?: MarketRow[]; marketsRead?: number; marketsWithFills?: number };
+type Wallet = { account: string; market: string; quoteSymbol: string; closedTrades: number; winRateBps: number; realizedTotal: string; tempo: Tempo; coverage: FillReadCoverage; distributions: Dist[]; warnings: string[]; mismatches: number; unmatched: number; reconcileOk: boolean; fillsRead: number; changesReconciled: number; markets?: MarketRow[]; marketsRead?: number; marketsWithFills?: number };
 
 const num = (v: unknown) => typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v));
 const int = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+const finiteOrNull = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v));
 function parse(value: unknown): Wallet {
   if (!record(value) || typeof value.account !== 'string' || typeof value.quoteSymbol !== 'string' || !int(value.closedTrades) || !int(value.winRateBps) || !num(value.realizedTotal) || !Array.isArray(value.distributions) || !Array.isArray(value.warnings) || !int(value.mismatches) || !int(value.unmatched) || typeof value.reconcileOk !== 'boolean' || !int(value.fillsRead) || !int(value.changesReconciled)) throw new Error('Unexpected response.');
+  if (!record(value.tempo) || !int(value.tempo.closes) || !finiteOrNull(value.tempo.closesPerDay) || !finiteOrNull(value.tempo.medianGapSec) || !finiteOrNull(value.tempo.activeSpanSec)) throw new Error('Unexpected response.');
   parseCoverage(value.coverage);
   for (const d of value.distributions as unknown[]) {
     if (!record(d) || typeof d.mode !== 'string' || !int(d.paths) || !num(d.median) || !num(d.p05) || !num(d.p95) || !num(d.cvar95) || !num(d.bankruptcyRate) || !Array.isArray(d.finalEquities) || !(d.finalEquities as unknown[]).every(num)) throw new Error('Unexpected response.');
@@ -121,6 +124,7 @@ export function WalletPanel({ preset }: { preset?: { address: string; days: stri
       {result && <IntegrityBanner result={result} quote={quote} cash={ranWith?.cash ?? cash} scope={scope} />}
       {result && <CoverageNote coverage={result.coverage} prominent />}
       {result?.markets && <MarketTable rows={result.markets} quote={quote} marketsRead={result.marketsRead} />}
+      {result && <TraderStyleNote tempo={result.tempo} winRateBps={result.winRateBps} realizedTotal={result.realizedTotal} mirror={mirror} />}
       {result && mirror && dist && <CopySimNote mirror={mirror} account={result.account} closedTrades={result.closedTrades} quote={quote} cash={ranWith?.cash ?? cash} />}
       {result && (dist ? <>
         <div className="segmented resample-mode">{result.distributions.map(d => <label key={d.mode}><input type="radio" name="wallet-mode" checked={dist.mode === d.mode} onChange={() => setMode(d.mode)} /><span>{d.mode.startsWith('shuffle') ? 'Shuffle' : d.mode.startsWith('block') ? 'Block boot.' : 'Bootstrap'}</span></label>)}</div>
@@ -185,5 +189,25 @@ export function CopySimNote({ mirror, account, closedTrades, quote, cash }: { mi
     <p>Resamples this trader's {closedTrades.toLocaleString()} realized closes into new trade orders. <strong>In-sample</strong> — it models trade-order risk on their past, not a forecast of future returns or of what copying them would yield.</p>
     <p>Mirrors <strong>gross trade PnL only</strong> ({amount(mirror.gross)} {quote}). Their net rank ({amount(mirror.net)} {quote}) also includes funding ({amount(mirror.fundingPaid)} {quote} paid; a negative figure is received) and trade fees, which a copy does not replicate.{fundingDroveNet ? " Funding received — not trading — lifted this trader's net above their gross; mirroring their trades would not reproduce that income." : ''}</p>
     <p>Assumes you match their position size on every close, so your PnL per close equals theirs. Your starting cash ({amount(cash)} {quote}) is the buffer the bankruptcy rate is measured against.</p>
+  </div>;
+}
+
+/**
+ *  The descriptive trading-style lens: tempo (cadence between closes) and a style label, for any
+ *  wallet read — mirror or manual. A heuristic over one window's closes, not a forecast and not a
+ *  skill verdict; it says tempo is inter-close cadence, not holding time (the fill read does not match
+ *  opens to closes). The funding-driven label appears only on the mirror path, where the leaderboard
+ *  netting carried the funding leg; a manual read labels its funding unknown, not zero.
+ */
+export function TraderStyleNote({ tempo, winRateBps, realizedTotal, mirror }: { tempo: Tempo; winRateBps: number; realizedTotal: string; mirror: MirrorContext | null }) {
+  const cadence = classifyCadence(tempo);
+  const fundingDriven = mirror ? Number(mirror.fundingPaid) < 0 && Number(mirror.net) > Number(mirror.gross) : null;
+  const style = classifyStyle({ fundingDriven, grossPositive: Number(realizedTotal) > 0, winRateBps, cadence, closes: tempo.closes });
+  const span = tempo.activeSpanSec === null ? null : fmtGap(tempo.activeSpanSec);
+  return <div className="tempo-note" id="trader-style" role="note">
+    <h3>Trading style <span className="muted">(descriptive, not a forecast)</span></h3>
+    <p><strong>{cadence.label}</strong> — {cadence.reason}.{span ? ` Active over ${span}.` : ''}</p>
+    <p><strong>{style.label}</strong>{style.reasons.length > 0 ? ` — ${style.reasons.join('; ')}.` : ''}</p>
+    <p className="muted">Tempo is the cadence between closes, not how long positions are held: the fill read does not match opens to closes. A heuristic over this window's {tempo.closes.toLocaleString()} closes, not a verdict on skill.</p>
   </div>;
 }

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CopySimNote, type MirrorContext } from "./Wallet.js";
+import { CopySimNote, TraderStyleNote, type MirrorContext } from "./Wallet.js";
+import type { Tempo } from "../verify/tempo.js";
 
 /**
  *  The copy-sim lens, rendered. Its job is honesty: a "Mirror" click resamples the trader's gross
@@ -55,4 +56,39 @@ test("the banner states the size-match assumption and the cash buffer behind the
   assert.ok(m.includes("your PnL per close equals theirs"), "so the per-close PnL is the trader's");
   assert.ok(m.includes("2,500"), "the starting cash the bankruptcy rate is measured against");
   assert.ok(m.includes("bankruptcy rate"), "ties the cash to the bust rate");
+});
+
+const tempo: Tempo = { closes: 927, closesPerDay: 132.4, medianGapSec: 60, activeSpanSec: 55620 };
+const style = (mirror: MirrorContext | null, over: { winRateBps?: number; realizedTotal?: string; tempo?: Tempo } = {}) =>
+  renderToStaticMarkup(<TraderStyleNote tempo={over.tempo ?? tempo} winRateBps={over.winRateBps ?? 9820} realizedTotal={over.realizedTotal ?? "44569.953356159610077967"} mirror={mirror} />);
+
+test("the trading-style note is descriptive, not a forecast, and tempo is cadence not holding time", () => {
+  const m = style(harvester);
+  assert.ok(m.includes("Trading style"), "the section is named");
+  assert.ok(m.includes("descriptive, not a forecast"), "it disclaims prediction");
+  assert.ok(m.includes("cadence between closes"), "tempo is named as inter-close cadence");
+  assert.ok(m.includes("not how long positions are held"), "it does not claim holding time");
+  assert.ok(m.includes("not a verdict on skill"), "it disclaims a skill judgement");
+  assert.ok(m.includes("High-frequency"), "the cadence label from a 60s median gap");
+  assert.ok(m.includes("927"), "the close count the heuristic rests on");
+});
+
+test("CANARY: a mirror whose net came from received funding is labelled funding-driven", () => {
+  const m = style(harvester);
+  assert.ok(m.includes("Funding-driven"), "the netting carried the funding leg");
+  assert.ok(m.includes("would not reproduce"), "a trade copy cannot reproduce the funding income");
+});
+
+test("CANARY: a manual read does not claim funding-driven and says funding is unknown", () => {
+  const m = style(null);
+  assert.ok(!m.includes("Funding-driven"), "no funding netting on the manual path");
+  assert.ok(m.includes("funding is not read"), "the funding leg is declared unknown, not zero");
+  assert.ok(m.includes("High-frequency"), "the cadence label still stands without funding");
+});
+
+test("a mirror that paid funding is not labelled funding-driven, and does not call funding unknown", () => {
+  const payer: MirrorContext = { rank: 2, net: "10.000000", gross: "100.000000", fundingPaid: "90.000000" };
+  const m = style(payer);
+  assert.ok(!m.includes("Funding-driven"), "paid funding did not drive the net");
+  assert.ok(!m.includes("funding is not read"), "a netted mirror does not call funding unknown");
 });

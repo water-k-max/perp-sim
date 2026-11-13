@@ -67,3 +67,22 @@ test("the fill-read coverage reaches the response, so truncation cannot be dropp
   assert.equal(cut.coverage.stoppedBy, "maxFills");
   assert.equal(cut.coverage.accountFillsAtCeiling, true);
 });
+
+test("tempo reaches the response: cadence between closes over the window, not holding time", async () => {
+  const r = report([5_000_000n, -2_000_000n, 3_000_000n]);
+  r.fromSec = 0; r.toSec = 86_400;
+  // The opening fill stays at t=1 and is excluded; the three closes land 100s apart.
+  r.rows = [row(0n, 0n), ...[5_000_000n, -2_000_000n, 3_000_000n].map((p, i) => ({ ...row(1n, p), t: 100 + i * 100 }))];
+  const out = await resampleAccount(r, opts);
+  assert.equal(out.tempo.closes, 3, "only the closing fills count");
+  assert.equal(out.tempo.medianGapSec, 100);
+  assert.equal(out.tempo.activeSpanSec, 200);
+  assert.equal(out.tempo.closesPerDay, 3, "three closes over a one-day window");
+});
+
+test("an empty account reports zero closes and no cadence, not a fabricated tempo", async () => {
+  const out = await resampleAccount(report([]), opts);
+  assert.equal(out.tempo.closes, 0);
+  assert.equal(out.tempo.medianGapSec, null);
+  assert.equal(out.tempo.activeSpanSec, null);
+});
