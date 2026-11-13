@@ -19,10 +19,13 @@
  *  Discovery is one venue-wide read: `listPerpPositionChanges` with no account filter, windowed in
  *  seconds, returns every account's closing updates and their realized PnL together — so the set of
  *  active accounts and the gross ranking fall out of the same stream, with no per-account fill
- *  replay. Measured on Hideki 2026-11-13 (`probe/leaderboard-scope.mts`): the anonymous role CAN read
- *  it venue-wide, but the shared indexer answers `database query error` under load and succeeds on
- *  retry, so every page goes through `retryRead` and a read that stops early is labelled, never
- *  presented as a complete census.
+ *  replay. Measured on Hideki 2026-11-13 (`probe/leaderboard-order.mts`, warm client, interleaved):
+ *  the anonymous role CAN read it venue-wide, but the indexer refuses the ascending shape —
+ *  `order: "asc"` with the closing kinds answers `database query error` 3/3 while `order: "desc"`
+ *  serves the same window 3/3 in ~2s. Discovery therefore pages newest-first (`desc`); aggregation
+ *  and coverage are order-agnostic, so the board is identical. Every page still goes through
+ *  `retryRead` for transient load, and a read that stops early is labelled, never presented as a
+ *  complete census.
  *
  *  Read-only throughout: no signer, no chain write, no private state.
  */
@@ -248,13 +251,15 @@ export function rankLeaderboard(nets: readonly AccountNet[], quoteDecimals: numb
 }
 
 /**
- *  Page the venue-wide closing updates forward over `[from, to)`, oldest first, deduping by id.
+ *  Page the venue-wide closing updates backward over `[from, to)`, newest first (`desc` — the shape
+ *  the indexer serves; `asc` is refused, see the module note), deduping by id.
  *
- *  The cursor is the last row's timestamp (inclusive), which re-reads the boundary second; the id
- *  set drops the overlap. A page that adds no new id means one timestamp holds more rows than a page
- *  can carry, so the walk cannot advance — that is reported as truncation rather than spun on.
+ *  The cursor is the last row's timestamp plus one. `to` is exclusive, so +1 re-includes the boundary
+ *  second and the next page re-reads any rows sharing it that did not fit; the id set drops the
+ *  overlap. A page that adds no new id means one timestamp holds more rows than a page can carry, so
+ *  the walk cannot advance — that is reported as truncation rather than spun on.
  */
-async function discoverClosing(
+export async function discoverClosing(
   client: SomniaMarketsClient,
   fromSec: number,
   toSec: number,
@@ -263,14 +268,14 @@ async function discoverClosing(
   const pageSize = 500;
   const seen = new Set<string>();
   const all: PerpPositionChange[] = [];
-  let from = fromSec;
+  let to = toSec;
   let pages = 0;
   let scanned = 0;
   let truncated = false;
   for (;;) {
-    const cursor = from;
+    const cursor = to;
     const rows = await retryRead(`leaderboard discovery ${cursor}`, () =>
-      client.listPerpPositionChanges({ kinds: CLOSING_KINDS, from: cursor, to: toSec, order: "asc", limit: pageSize }),
+      client.listPerpPositionChanges({ kinds: CLOSING_KINDS, from: fromSec, to: cursor, order: "desc", limit: pageSize }),
     );
     pages += 1;
     scanned += rows.length;
@@ -285,7 +290,7 @@ async function discoverClosing(
     if (rows.length < pageSize) break;
     if (pages >= maxPages) { truncated = true; break; }
     if (fresh === 0) { truncated = true; break; }
-    from = Number(rows[rows.length - 1]!.timestamp);
+    to = Number(rows[rows.length - 1]!.timestamp) + 1;
   }
   const byAccount = aggregateClosing(all, fromSec, toSec);
   let first: number | null = null;

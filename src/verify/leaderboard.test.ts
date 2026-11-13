@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FundingPayment, PerpFeeRecord, PerpPositionChange } from "@somnia-chain/markets-sdk";
-import { aggregateClosing, netAccount, netLegs, rankLeaderboard, type GrossByAccount } from "./leaderboard.js";
+import type { FundingPayment, PerpFeeRecord, PerpPositionChange, SomniaMarketsClient } from "@somnia-chain/markets-sdk";
+import { aggregateClosing, discoverClosing, netAccount, netLegs, rankLeaderboard, type GrossByAccount } from "./leaderboard.js";
 
 /**
  *  The leaderboard is tested as the pure netting and ranking it is: fixture legs in, net out, no
@@ -201,4 +201,119 @@ test("per-row warnings name the truncation, the unknown kind and the separate li
   assert.ok(w.some((x) => x.includes("funding read hit its page cap")));
   assert.ok(w.some((x) => x.includes("unrecognised kind") && x.includes("Weird")));
   assert.ok(w.some((x) => x.includes("liquidation-rail") && x.includes("not deducted")));
+});
+
+/**
+ *  Discovery pagination, exercised against a faithful mock indexer rather than a chain read. The mock
+ *  honours the query contract (inclusive `from`, exclusive `to`, kinds filter, asc/desc sort, limit)
+ *  and reproduces the measured refusal: venue-wide `asc` + closing kinds answers `database query error`
+ *  (Hideki 2026-11-13, `probe/leaderboard-order.mts`, asc 0/3 vs desc 3/3 on a warm client). So an
+ *  implementation that reverts to `asc` cannot pass — `retryRead` exhausts and the walk throws. The
+ *  canary that matters: the backward cursor must re-include the boundary second (`to = oldest + 1`),
+ *  or rows sharing a page-boundary timestamp are silently dropped and the board understates gross.
+ */
+type ChangeQuery = { account?: string; kinds?: readonly string[]; from?: number; to?: number; order?: "asc" | "desc"; limit?: number; offset?: number };
+
+function mockIndexer(rows: readonly PerpPositionChange[]): { client: SomniaMarketsClient; orders: string[] } {
+  const orders: string[] = [];
+  const client = {
+    listPerpPositionChanges(q: ChangeQuery): Promise<PerpPositionChange[]> {
+      const order = q.order ?? "asc";
+      orders.push(order);
+      if (order === "asc" && !q.account && q.kinds) {
+        return Promise.reject(new Error("indexer PerpPositionChanges failed: database query error"));
+      }
+      const dir = order === "desc" ? -1 : 1;
+      const out = rows
+        .filter((r) => {
+          const t = Number(r.timestamp);
+          if (q.from !== undefined && t < q.from) return false;
+          if (q.to !== undefined && t >= q.to) return false;
+          if (q.account && r.account.toLowerCase() !== q.account.toLowerCase()) return false;
+          if (q.kinds && !q.kinds.includes(r.kind)) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          const ta = Number(a.timestamp);
+          const tb = Number(b.timestamp);
+          if (ta !== tb) return (ta - tb) * dir;
+          return a.id < b.id ? -dir : a.id > b.id ? dir : 0;
+        });
+      const offset = q.offset ?? 0;
+      return Promise.resolve(out.slice(offset, offset + (q.limit ?? out.length)));
+    },
+  };
+  return { client: client as unknown as SomniaMarketsClient, orders };
+}
+
+test("discoverClosing requests the served desc shape and drains a sub-page window newest-first", async () => {
+  const { client, orders } = mockIndexer([
+    change({ id: "a", account: "0xAAA", t: 150, pnl: 5n }),
+    change({ id: "b", account: "0xAAA", t: 120, pnl: 3n }),
+    change({ id: "c", account: "0xBBB", t: 110, pnl: 7n }),
+  ]);
+  const { byAccount, coverage } = await discoverClosing(client, 100, 200, 40);
+  assert.deepEqual(orders, ["desc"], "the indexer refuses asc; discovery must request desc");
+  assert.equal(coverage.pages, 1);
+  assert.equal(coverage.truncated, false);
+  assert.equal(coverage.rowsScanned, 3);
+  assert.equal(coverage.rowsInWindow, 3);
+  assert.equal(coverage.firstChangeSec, 110);
+  assert.equal(coverage.lastChangeSec, 150);
+  assert.equal(byAccount.get("0xaaa")!.gross, 8n);
+  assert.equal(byAccount.get("0xbbb")!.gross, 7n);
+});
+
+test("discoverClosing reports an empty window without truncation", async () => {
+  const { client } = mockIndexer([]);
+  const { byAccount, coverage } = await discoverClosing(client, 100, 200, 40);
+  assert.equal(byAccount.size, 0);
+  assert.equal(coverage.pages, 1);
+  assert.equal(coverage.truncated, false);
+  assert.equal(coverage.rowsInWindow, 0);
+  assert.equal(coverage.firstChangeSec, null);
+  assert.equal(coverage.lastChangeSec, null);
+});
+
+test("CANARY: discoverClosing walks backward across pages and keeps rows sharing the boundary second", async () => {
+  // 499 rows at t=502..1000, then 3 rows at t=500, then 10 rows at t=490..499 (512 total).
+  // Page 1 (500, desc) ends on the FIRST t=500 row; the other two spill. The cursor must become
+  // 500+1 so page 2 re-includes t=500; with to=500 (exclusive) the two spillovers would vanish.
+  const rows: PerpPositionChange[] = [];
+  for (let t = 502; t <= 1000; t++) rows.push(change({ id: `h${t}`, account: "0xAAA", t, pnl: 1n }));
+  for (let i = 0; i < 3; i++) rows.push(change({ id: `edge${i}`, account: "0xAAA", t: 500, pnl: 1n }));
+  for (let t = 490; t <= 499; t++) rows.push(change({ id: `l${t}`, account: "0xAAA", t, pnl: 1n }));
+  const { client, orders } = mockIndexer(rows);
+  const { byAccount, coverage } = await discoverClosing(client, 100, 2000, 40);
+  assert.ok(orders.every((o) => o === "desc"), "every page uses the served desc shape");
+  assert.equal(byAccount.get("0xaaa")!.gross, 512n, "all 512 rows collected; the two boundary spillovers must survive");
+  assert.equal(byAccount.get("0xaaa")!.closes, 512);
+  assert.equal(coverage.pages, 2);
+  assert.equal(coverage.truncated, false);
+  assert.equal(coverage.rowsInWindow, 512);
+  assert.equal(coverage.rowsScanned, 513, "page 2 re-reads the one boundary row already seen; dedup drops it");
+  assert.equal(coverage.firstChangeSec, 490);
+  assert.equal(coverage.lastChangeSec, 1000);
+});
+
+test("discoverClosing labels truncation when one timestamp holds more rows than a page", async () => {
+  const rows: PerpPositionChange[] = [];
+  for (let i = 0; i < 600; i++) rows.push(change({ id: `s${i}`, account: "0xAAA", t: 500, pnl: 1n }));
+  const { client } = mockIndexer(rows);
+  const { byAccount, coverage } = await discoverClosing(client, 100, 2000, 40);
+  assert.equal(coverage.truncated, true);
+  assert.equal(coverage.pages, 2, "page 2 re-reads the same 500 ids, adds none, and stops");
+  assert.equal(byAccount.get("0xaaa")!.closes, 500);
+  assert.equal(coverage.rowsInWindow, 500);
+});
+
+test("discoverClosing labels truncation when the page cap binds mid-window", async () => {
+  const rows: PerpPositionChange[] = [];
+  for (let t = 1000; t < 2500; t++) rows.push(change({ id: `m${t}`, account: "0xAAA", t, pnl: 1n }));
+  const { client } = mockIndexer(rows);
+  const { coverage } = await discoverClosing(client, 100, 3000, 2);
+  assert.equal(coverage.truncated, true);
+  assert.equal(coverage.pages, 2);
+  assert.equal(coverage.rowsScanned, 1000, "two full pages scanned before the cap stopped the walk");
+  assert.equal(coverage.rowsInWindow, 999, "page 2 re-reads the boundary row t=2000; dedup drops it, so 999 unique");
 });
