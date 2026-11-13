@@ -2,16 +2,21 @@
 
 Date: 2026-11-10 · Scope: `perp-sim/` working tree at the commit that introduces this file.
 
-**Status in one line: the deployment is wired and unit-proven. Nothing has been published, and no platform behaviour has been observed.**
+**Status in one line: published and serving. `https://perp-sim.vercel.app` answers 200 for the static shell,
+`/api/chain` and `/api/markets`, runs a real `POST /api/backtest` against live Hideki data, and still refuses the
+two run-store routes with the reason written below — all of it **observed** on 2026-11-13, in §9.**
 
 Every claim below is tagged **measured** (a number from a run on this machine), **observed** (something a tool
 showed while this session worked), **code-level** (a fact about this repository, checkable by reading it), or
-**unverified** (something the platform must confirm before it can be called true). There is no claim in this file
-about what Vercel does, because no invocation has run there.
+**unverified** (something the platform must confirm before it can be called true). Sections 1–8 are the pre-publish
+record and keep the tags they were written with; §9 is what the platform actually did to that build. Where §9
+repairs a claim, the claim is corrected in place and pointed at §9 rather than quietly rewritten.
 
 ---
 
-## 1. Why no deployment was fired
+## 1. Why publishing was held back as an opt-in
+
+_(Title as written before the first deploy; §9 records what happened when it was fired.)_
 
 The task was "use the Vercel connector to wire deployment to Vercel". What this session could establish:
 
@@ -41,14 +46,24 @@ One static directory plus **one** function that carries the whole API. No second
 | Transport contract | `src/server/contract.ts` | `RequestLike` / `ResponseLike` / `Deployment` / `RouteContext`. 12 lines of types, no behaviour. |
 | Node transport | `src/server/node-transport.ts` | `node:http` → contract. Used by `src/bin/web.ts`, loopback-bound. |
 | Web transport | `src/server/web-transport.ts` | Web `Request`/`Response` → contract. Used by the function entry. |
-| Function entry | `api/[...all].ts` | Catch-all: every path arrives at `/api/*`. |
+| Function entry | `api/[...all].ts` | Catch-all: every path arrives at `/api/*`. Exports `{ fetch }`, not a bare function — see below. |
 | Static staging | `src/bin/stage-site.ts` | `build:site` = `build:web` + stage `public/*` and `dist/web/app.js` into `dist/site`, checking each staged file against its source size. |
 | Platform config | `vercel.json` | Build command, output directory, function budget, CDN headers. |
 
 The two transports are the only duplication, and their equality is a test rather than an assertion:
 `src/server/app.test.ts` sends the same probes through a real loopback `node:http` server and through `serve()`
-and fails where they disagree — status, body shape, or header policy. **measured** — 18 tests, 18 pass, 0 fail
-(10.2 s), inside `pnpm test:server`, which is inside `gate`; the whole gate is green on this tree.
+and fails where they disagree — status, body shape, or header policy. **measured** — 22 tests in
+`src/server/*.test.ts`, 22 pass, 0 fail (4.4 s), inside `pnpm test:server`, which is inside `gate`; the gate runs
+on every push in CI, so "green" there is evidence about this tree, not about the last one.
+
+The entry's **export shape is a platform contract**, and the first live deployment paid for learning it.
+`@vercel/node` inspects what the entry exports and chooses the calling convention from that: an export carrying a
+`fetch` (or an HTTP-method) function is invoked as a Web handler, while anything else — a default-exported async
+function included — is invoked as the legacy `(req, res)` pair. Under the legacy convention the entry receives
+`node:http`'s message, whose `headers` is a plain object with no `forEach`, and the `Response` it returns is
+discarded instead of sent: no route ever answered, and each invocation held its slot until `maxDuration` ended it
+with a 504. `src/server/entry.test.ts` asserts the shape against the loader's own rule and keeps a control showing
+that the bare-function export does not satisfy it.
 
 ---
 
@@ -134,7 +149,8 @@ test that says "no network, no run" (`src/backtest-repro.test.ts` mocks `fetch` 
 memory instead of failing. Locally that trade is not worth taking. On a warm instance that pays three reads per
 request, 60 seconds is.
 
-**unverified** — no cache hit rate has been observed anywhere; there is no traffic and no platform.
+**unverified** — no cache hit rate has been measured. §9 put a handful of requests through the live function, which
+is traffic but not a hit rate; the TTL's effect is still a number nobody has read.
 
 ---
 
@@ -161,6 +177,10 @@ every preview — the failure mode would look like an authorization bug, not a c
 **unverified** — whether the platform's own `Dependent Deployment` / Vercel Authentication layers sit in front of
 this is a dashboard setting nobody in this session could read. If the tool should not be world-readable, that is
 the switch to pull, and it is a platform setting, not a code one.
+
+**observed** (§9), and the answer is the plain one: the production alias answers an unauthenticated request from
+outside with 200, while the per-push deployment URLs 302 to Vercel Authentication. So the tool *is* world-readable
+today, and §7.6 remains a decision somebody has to make on purpose rather than one the code already made.
 
 ---
 
@@ -190,6 +210,12 @@ The steps are the platform's own three-step build: `vercel pull --yes --environm
 `package.json` declares `engines.pnpm: ">=12"` but no `packageManager` field. Pinging `pnpm build:site` from the
 platform's image with a pnpm older than 12 will trip that engines guard and fail the build.
 
+**Answered, and it went the other way** — §9: `vercel build` in CI reported `Using pnpm@10.x based on project
+creation date`, printed the `engines.pnpm`-without-corepack warning, and built anyway: the guard is an *install*-time
+check, and on this path the install is the CI job's `pnpm install --frozen-lockfile`, not the platform's. The risk
+therefore still exists for anyone who lets the platform install — the warning is the platform saying so on every
+build — but it is no longer an open question about the pipeline that runs today.
+
 `packageManager: "pnpm@12.11.2"` was added here, tested, and then removed again: **measured** — under pnpm 12 the
 field makes `pnpm install` append 158 lines to `pnpm-lock.yaml` (`importers.…packageManagerDependencies` plus a
 `@pnpm/exe.<os>-<arch>` entry per platform). That is pnpm's own behaviour, not a problem, but it is a lockfile
@@ -202,34 +228,89 @@ add it. (`tmp/pnpm-lock.with-packageManager.yaml` holds the churned lockfile for
 
 ## 7. To actually publish it
 
-Not done here. The short list, in order:
+Written as a to-do list; §9 is what happened when it was executed. Each item keeps its status rather than being
+deleted, because the list is the procedure for the *next* deployment too.
 
-1. Connect the repository in the Vercel dashboard (or a session where the connector attaches), create the project,
-   and confirm the build image runs `pnpm build:site` and uploads `dist/site`. If it fails on the `engines.pnpm`
-   guard, that is the §6 item: add `packageManager` and commit the lockfile it writes.
-2. Read Project Settings → Functions and **record the plan's real `maxDuration` ceiling**. If it is below 106 s,
-   the 4000-path job cannot complete in one invocation, and the fix is to lower the accepted work on deployments —
-   not to let the request die at the wall clock.
-3. Set `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` as repository secrets, then
-   `VERCEL_DEPLOY_ENABLED=true` as a repository variable — or run `vercel deploy --prod` by hand once.
-4. On the first deployment, re-measure: `POST /api/backtest` at `paths: 4000`, then `GET /api/chain`,
-   `GET /api/markets`, then confirm `POST /api/resample` and `GET /api/runs` return the 501 with its stated reason
-   (they must, or the run-store assumption is wrong and this document is out of date).
-5. Check the response headers actually carry the CSP from `vercel.json`, and that a request with a foreign `Host`
-   is 403. Both are unit-proven here and platform-dependent there.
-6. Decide whether the deployment should be public at all. A public URL makes the work ceiling
-   (`concurrency × instances`) someone else's problem; the platform's auth layer is where that gets answered.
+1. **done** — the repository is connected and CI runs `vercel pull` → `vercel build` → `vercel deploy --prebuilt`; the
+   build image ran `pnpm build:site` and uploaded `dist/site` without tripping the `engines.pnpm` guard (§6).
+2. **answered from the other side** — a wedged invocation was killed at exactly 300 s (§9), so this plan honours the
+   configured `maxDuration`. The heavier worry is smaller than it looks: the `paths: 4000` resample is one of the two
+   run-store routes the *deployment* refuses with a 501, so it cannot collide with the wall clock there at all. The
+   route that can is `POST /api/backtest`, whose accepted work is bounded by `days ≤ 90` — measured at 1 day and
+   2.44 s (§9), never at 90.
+3. **done** — the three secrets and `VERCEL_DEPLOY_ENABLED=true` are set as repository values, by hand, in the UI.
+4. **partly** — `GET /api/chain`, `GET /api/markets` and a real 1-day `POST /api/backtest` were re-measured on the
+   live host, and both 501s arrived with their stated reason. The `paths: 4000` number was not: it belongs to a route
+   that refuses on a deployment, which is why item 2's ceiling question needs a different place to be answered.
+5. **done for the headers, honest about the host** — CSP, `nosniff`, `Referrer-Policy` and HSTS are on the live
+   responses (§9). A foreign `Host` is 403 in the function's own tests; from outside, the CDN decides the host and
+   rewrites `x-forwarded-host`, so forging it from a client returns 200 instead. The guard is real, and what enforces
+   it for public traffic is the edge.
+6. **still open** — whether the alias should be world-readable at all. §9 confirms it currently is. A public URL makes
+   the work ceiling (`concurrency × instances`) someone else's problem; the platform's auth layer is where that gets
+   answered, and no code change substitutes for it.
 
 ---
 
 ## 8. What is still not true of this deployment
 
-- No invocation has run on the platform; **no measured platform latency, cold start, memory limit or plan cap.**
-- The static shell is proven to stage (`build:site` compares every file's size to its source) and proven to be
-  reachable *in tests*, not in a browser pointed at a hosted URL.
+Written before §9; the two bullets §9 answered are marked as such rather than deleted, because the reasoning that
+put them there is the reasoning a reader needs next time.
+
+- ~~No invocation has run on the platform.~~ §9 has platform latency for four routes and one real backtest.
+  **Still missing: cold start, memory headroom, behaviour under concurrent load, and the plan's instance ceiling** —
+  none of that is measurable from one request at a time.
+- ~~The static shell is proven reachable in tests, not in a browser pointed at a hosted URL.~~ It is served; a
+  browser driven against the live alias is the remaining half.
 - Nothing persists between requests on a deployment. The run store is local-only by policy, and the UI hides what
-  it cannot do.
-- The live cache is a 60-second TTL with no observed hit rate.
-- If the platform caps `maxDuration` below the largest legal job, the biggest request is currently unservable on
-  the deployment even though the code accepts it — §7.2 exists to find that out before anyone calls the tool
-  broken.
+  it cannot do. **observed** — the two 501s say so in those words on the live host.
+- The live cache is a 60-second TTL with no observed hit rate. Two invocations of a route ten seconds apart is not
+  a hit rate, and §9 does not pretend it is.
+- If the platform caps `maxDuration` below the largest legal job, the biggest request is unservable even though the
+  code accepts it. §9 saw 300 s honoured, so the ceiling is not the surprise — but the largest legal job
+  (`paths: 4000` resample) has never been run there, and that is the number that would actually collide with it.
+
+---
+
+## 9. What the platform actually did (2026-11-13)
+
+Published from `main` by CI (`gate` → `live` → `deploy`, run `43390282156`, commit `f928717`). Everything below is
+**observed** on the live alias `https://perp-sim.vercel.app`, and it is what the first two published builds had to be
+fixed for.
+
+**It serves.** `/` returns 200 carrying the CSP, `nosniff`, `Referrer-Policy` and HSTS that `vercel.json` asks for;
+`/app.js` 200 at 311497 B, `/app.css` 200 at 25966 B, `/favicon.svg` 200 at 562 B. `/api/chain` 200 in 0.34 s,
+`/api/markets` 200 in 0.90 s and 40 pools — BTC, ETH, SOL, HYPE, the equity symbols and the metals, all quoted in
+`USDso`. A real `POST /api/backtest` (`BTC/USDso`, 1 day, long, 0.01, 10000 cash, intrabar) answered 200 in 2.44 s
+with `status=closed`, `complete=true`, entry `73329.209833269153`, end equity `9956.766…`, `pnl=-41.529`,
+`funding=-1.7049`, `fees=0.0`, `maxDrawdownPct=0.59`, 24 bars at `missingSettlements=0` and `gaps=0`, candle
+coverage 24/24, a 23-point trail, and the warning the model actually deserves: *Hypothetical fixed-position replay;
+settlement-mark entry is not a book fill.*
+
+**The refusals travel.** `GET /api/runs` and `POST /api/resample` both answer 501 on the deployment with exactly the
+sentence §3 writes for them. A cross-origin `POST /api/backtest` is refused 403.
+
+**Two lessons cost a production deploy each, because neither is visible from a unit test.**
+
+1. A module-scope `await getCodeIdentity()` in `src/backtest-api.ts` rejected with `ENOENT` on a file the built tree
+   does not carry. The promise was not attached to an `await`, so the rejection surfaced during *import*, the
+   instance exited before the handler existed, and every route answered the platform's own
+   `FUNCTION_INVOCATION_FAILED`. Fixed in `src/runs/manifest.ts` by identifying code from the running artifact when
+   the source read cannot finish, with a test covering both bundle layouts.
+2. The entry exported a bare async function, so the runtime chose the legacy `(req, res)` convention for it (§2) and
+   threw away the `Response`. Nothing was written, so each route held its slot until `maxDuration` killed it with a
+   504 — while the log showed our own error two seconds in, which is exactly how a dead deployment looks alive.
+   Fixed by `export default { fetch }`.
+
+Both are asserted by tests that need no platform; the CI probe step that found them is deleted.
+
+**Four incidental facts worth having down.** `maxDuration: 300` was honoured — a wedged invocation was killed at 300 s
+and not sooner. Hobby retains runtime logs for well under an hour, so `vercel logs --since 1h` is rejected and the
+default window is what works. Scoping logs to one deployment id misses the request the alias just served, because the
+alias can be answered by a deployment other than the newest. And a client-supplied `x-forwarded-host:
+evil.example.com` returned **200, not 403**: the CDN rewrites that header before the function sees it, so which host
+a request is addressed to is platform-supplied, not client-chosen. The function's own host guard is proven by
+`src/server/app.test.ts`; the edge is what makes it untestable from outside by header forgery, and saying otherwise
+would credit the deployment with a property it was never the one enforcing. Whether the alias should stay
+world-readable is still a decision: per-push URLs sit behind Vercel Authentication (302) while the production alias
+does not.

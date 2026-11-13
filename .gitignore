@@ -10,3 +10,7 @@ evidence/
 
 .cache/
 perp-sim-v2.zip
+
+.vercel
+.env*
+!.env.example

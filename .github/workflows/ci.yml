@@ -144,25 +144,6 @@ jobs:
       - name: Deploy the build output
         id: deploy
         run: |
-          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           url=$(vercel deploy --prebuilt ${{ steps.target.outputs.production }} --token "$VERCEL_TOKEN")
           echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "## Deployed ${url}" >> "$GITHUB_STEP_SUMMARY"
-      # TEMPORARY DIAGNOSTIC — remove once the alias serves 200. Runtime log entries land on Vercel a
-      # few seconds after the invocation, and scoping the query to one deployment hides the request if
-      # the alias was served by a different one, so: invoke, wait, then read project-wide since this
-      # build was pushed — a 30-minute window is mostly old deployments and reads as a repeated cure.
-      - name: Probe the live function and dump its logs
-        if: always() && steps.deploy.outcome == 'success'
-        run: |
-          for path in /api/chain /api/markets /; do
-            printf "=== %s -> " "$path"
-            curl -sS -o /dev/null -w "%{http_code} in %{time_total}s\n" --max-time 90 \
-              -H 'accept: application/json' "https://perp-sim.vercel.app$path" || true
-          done
-          echo "=== waiting for log ingestion ==="
-          sleep 45
-          echo "=== runtime errors since this deploy ==="
-          timeout 120 vercel logs --query 'level:error' --since "${{ steps.deploy.outputs.built_at }}" \
-            --limit 30 --non-interactive --token "$VERCEL_TOKEN" 2>&1 \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let n=0;for(const l of s.split("\n")){try{const j=JSON.parse(l);if(j.type==="log"){n++;const m=j.data.message.split("\n").slice(0,4).join(" | ");console.log(`${j.data.timestamp} ${j.data.deploymentId} ${j.data.requestMethod} ${j.data.requestPath} :: ${m}`)}}catch{}}console.log(`error entries: ${n}`)})' || true
