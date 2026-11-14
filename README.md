@@ -94,32 +94,6 @@ pnpm gate         # typecheck + every suite + site build, fully offline
 pnpm test:guards  # mutation harness for the UI render guards (slow, not in gate)
 ```
 
-CI runs the same `gate` on every push/PR, a read-only live-chain job, and — when the repo variable `VERCEL_DEPLOY_ENABLED=true` — the Vercel deploy. Deployment evidence: `docs/deployment-vercel.md`.
 
-## Honest limits
 
-- **Wallet lens is gross; the leaderboard is net.** The wallet resample reports the chain's *gross realized* trade PnL — funding and fees are not deducted on that lens. The leaderboard ranks *net* (gross − funding paid − trade fees). On Hideki, taker/maker fees are 0 by venue policy, so the wallet fee check is labelled `vacuous-zero-rate`, not "verified".
-- **In-sample, not a forecast.** The copy-sim mirrors a trader's *past* realized closes; the tempo/style note is a descriptive heuristic over one window, not a skill verdict or a prediction.
-- **Modelled, not executed.** A tape fill estimates what a small taker could have got; the distribution is a model of trade-order risk, **not a forecast**. No order-book depth, no liquidation fill price, gas is a constant. The separate execution path places a *real* testnet order — that is not a backtest result and carries real testnet risk.
-- **Execution is bounded, not a trading bot.** One order per request, capped, confirm-gated, local-only, testnet-only. It does not run a strategy, manage a position, or promise a fill; a placed order can still be refused or liquidated by the venue.
-- **One position at a time** in hypothesis mode; cross-market margin, ADL and insurance funds are out of scope.
-- The research lenses are read-only; the execution path is local-only, testnet-only and opt-in. Not financial advice. Hideki testnet only — do not repoint it at mainnet.
 
-## X posts
-
-Real posts about this build, tagging [@DreamDEXSomnia](https://x.com/DreamDEXSomnia), are linked here once published. *(No posts are fabricated — this section is filled with the author's own published links.)*
-
-## Layout
-
-```
-src/engine/    position book, fill model, replay loop
-src/data/      GraphQL reads, content-addressed cache, tape, parameter epochs
-src/resample/  seeded Monte Carlo, sizing, optimism audit, out-of-sample
-src/verify/    invariants + account reconciliation (incl. cross-market)
-src/execute/   bounded local-only execution: policy, proposal, calldata, executor
-src/server/    one route table, two transports (loopback / serverless)
-src/web/       NOVA React UI (hand-rolled SVG charts)
-api/           per-route Vercel functions -> the shared handler
-```
-
-Constraints and phase plan: `AGENTS.md`. Resampling design: `docs/resampling-design.md`. Execution safety model: `docs/execution.md`. Calibration and invariant detail live in the module sources and their tests.
