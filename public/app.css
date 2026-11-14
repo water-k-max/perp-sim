@@ -243,3 +243,37 @@ svg#chart:focus-visible{outline-offset:2px}
 .tempo-note p:last-child{margin-bottom:0}
 .tempo-note strong{color:var(--text)}
 @media(max-width:820px){.leaderboard-form{grid-template-columns:1fr 1fr}.leaderboard-form .primary{grid-column:1/-1}}
+/* Bounded execution lens (local-only). Amber marks a dry-run preview, red marks a live testnet send;
+   the receipt is monospace evidence, never an explorer link — Hideki has no public explorer. */
+.integrity-preview{border-left-color:var(--cyan);background:#0d1a22}
+.exec-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.pill-dry{color:#ffd09b;background:#32291f;border-color:#5c4730}
+.pill-live{color:#ffc3cf;background:#331e2c;border-color:#744152}
+.exec-safety{margin:0 0 18px;line-height:1.7}
+.execute-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;align-items:end;margin-bottom:16px}
+.execute-form label{display:grid;gap:7px;font-size:12px;font-weight:550}
+.exec-controls{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px}
+.exec-controls .direction{margin:0;min-width:170px;flex:1}
+.exec-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.exec-actions .primary{width:auto;height:43px;padding:0 22px}
+.exec-result{margin-top:16px}
+.exec-proposal h3{font-size:14px;margin:14px 0 10px}
+.exec-proposal .metrics{margin:12px 0}
+.exec-checks{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
+.exec-checks li{display:flex;gap:10px;align-items:baseline;font-size:11px;border-bottom:1px solid #253048;padding-bottom:6px}
+.exec-checks .verdict{font-weight:700;text-transform:uppercase;font-size:9px;letter-spacing:.8px;min-width:36px}
+.exec-checks .verdict.pass{color:var(--good)}
+.exec-checks .verdict.warn{color:#ffd09b}
+.exec-checks .verdict.fail{color:var(--bad)}
+.exec-checks .check-id{color:var(--text);min-width:120px}
+.exec-checks code{font-family:ui-monospace,monospace;color:var(--muted);overflow-wrap:anywhere}
+.exec-receipt{margin-top:16px}
+.exec-receipt h3{font-size:14px;margin:0 0 8px;color:var(--text)}
+.exec-receipt p{margin:0 0 4px}
+.exec-receipt code.lb-account{display:block;margin:4px 0 10px;padding:8px 10px;background:#0b1323;border:1px solid var(--border);border-radius:6px;overflow-wrap:anywhere;font-family:ui-monospace,monospace;font-size:12px;color:var(--text)}
+.exec-calldata{margin-top:14px}
+.exec-calldata .call{border-bottom:1px solid #253048;padding:8px 0}
+.exec-calldata .call:last-child{border-bottom:0}
+.exec-calldata .call-desc{font-size:12px;color:var(--text);margin:0 0 4px}
+.exec-calldata code{display:block;font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);overflow-wrap:anywhere;white-space:pre-wrap;margin-top:3px}
+@media(max-width:650px){.exec-controls{flex-direction:column;gap:14px}.exec-actions .primary{width:100%}.exec-checks .check-id{min-width:0}}

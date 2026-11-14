@@ -3,9 +3,10 @@ import { Configuration, watchFields, type ConfigFields } from './Configuration.j
 import { WalletPanel, type MirrorContext } from './Wallet.js';
 import { LeaderboardPanel } from './Leaderboard.js';
 import { ImportTradesPanel } from './ImportTrades.js';
+import { ExecutePanel, ExecutionUnavailable } from './Execute.js';
 import { Results } from './Results.js';
 import { ChainBadge } from './ChainBadge.js';
-import { changedLabels, fetchChain, runBadge, runFailure, validateResponse, type ChainReport, type RequestDTO, type Result, type RunFailure } from './dto.js';
+import { changedLabels, fetchChain, fetchExecution, runBadge, runFailure, validateResponse, type ChainReport, type ExecutionCapability, type RequestDTO, type Result, type RunFailure } from './dto.js';
 import { clearHistory, rememberRun, type HistoryEntry } from './history.js';
 
 class HttpFailure extends Error {
@@ -28,6 +29,7 @@ export function App() {
   const [setupOpen, setSetupOpen] = useState(true);
   const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 650px)').matches);
   const [network, setNetwork] = useState<ChainReport | null | undefined>(undefined);
+  const [execution, setExecution] = useState<ExecutionCapability | null | undefined>(undefined);
   const [picked, setPicked] = useState<{ address: string; days: string; nonce: number; mirror?: MirrorContext } | null>(null);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 650px)');
@@ -38,6 +40,11 @@ export function App() {
   useEffect(() => {
     let mounted = true;
     void fetchChain().then((report) => { if (mounted) setNetwork(report); });
+    return () => { mounted = false; };
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    void fetchExecution().then((capability) => { if (mounted) setExecution(capability); });
     return () => { mounted = false; };
   }, []);
   function navigateSetup(open: boolean) {
@@ -113,7 +120,8 @@ export function App() {
           <Results onEdit={() => navigateSetup(true)} data={result} failure={failure} busy={busy} badge={badge} activity={activity} stale={stale} exportReady={exportReady} onExport={exportResult} history={history} onClear={() => { clearHistory(); setHistory([]); }} />
         </div>
       </details>
-      <details className="panel methodology"><summary>Know what you’re measuring <span>Methodology &amp; assumptions</span></summary><div><p>Four lenses over one read-only engine: <strong>discover</strong> traders by net realized PnL (gross minus funding paid minus trade fees), <strong>verify</strong> any address by reconciling its fills against the indexer across every market it traded, <strong>mirror</strong> a trader’s realized closes in-sample against your starting cash, and <strong>describe</strong> their tempo and style. The simulation below is the hypothesis lens. Every lens is a historical read or a model of trade-order risk — never a forecast.</p><p>This is a historical replay of a declared strategy, not a live trade. Starting cash and base-asset size are independent inputs; the market determines the quote currency.</p><p>With the trade-tape model, each order is filled against the pool’s own recorded trades inside a window that opens after the decision plus latency, capped by a share of the volume traded in that window. Nothing is executed and no order book depth is replayed, so fills are modelled, not simulated queue positions.</p><p>Ending equity reflects price PnL, signed funding, taker and maker fees, and gas. Attribution must sum to the equity change exactly; a non-zero residual is reported as a failed invariant, never rounded away. On this network the venue’s live taker and maker rates are both 0 bps, so the fee line is zero by venue policy rather than switched off in the code — the rate path is implemented and exercised against a non-zero fixture, and liquidation penalties, which this network does charge, are read and reported but not modelled in a run. Check settlement gaps, index-derived marks and candle coverage before interpreting results.</p></div></details>
+      {execution && (execution.available ? <ExecutePanel capability={execution} /> : <ExecutionUnavailable />)}
+      <details className="panel methodology"><summary>Know what you’re measuring <span>Methodology &amp; assumptions</span></summary><div><p>Four lenses over one read-only engine: <strong>discover</strong> traders by net realized PnL (gross minus funding paid minus trade fees), <strong>verify</strong> any address by reconciling its fills against the indexer across every market it traded, <strong>mirror</strong> a trader’s realized closes in-sample against your starting cash, and <strong>describe</strong> their tempo and style. The simulation below is the hypothesis lens. Every lens is a historical read or a model of trade-order risk — never a forecast.</p><p>A separate, bounded execution path can place one real order on Somnia Hideki testnet, but only from the local lab: it is off by default, preview-only by default, capped per order, and gated by an explicit per-request confirm and the operator’s own key. The public deployment is read-only and holds no key, so it cannot send. An order placement is a live testnet transaction, not a backtest result.</p><p>This is a historical replay of a declared strategy, not a live trade. Starting cash and base-asset size are independent inputs; the market determines the quote currency.</p><p>With the trade-tape model, each order is filled against the pool’s own recorded trades inside a window that opens after the decision plus latency, capped by a share of the volume traded in that window. Nothing is executed and no order book depth is replayed, so fills are modelled, not simulated queue positions.</p><p>Ending equity reflects price PnL, signed funding, taker and maker fees, and gas. Attribution must sum to the equity change exactly; a non-zero residual is reported as a failed invariant, never rounded away. On this network the venue’s live taker and maker rates are both 0 bps, so the fee line is zero by venue policy rather than switched off in the code — the rate path is implemented and exercised against a non-zero fixture, and liquidation penalties, which this network does charge, are read and reported but not modelled in a run. Check settlement gaps, index-derived marks and candle coverage before interpreting results.</p></div></details>
     </main>
   </>;
 }

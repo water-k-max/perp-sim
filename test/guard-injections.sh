@@ -53,6 +53,7 @@ probe () { # file  perl-expr  test-file  test-name  [file2  perl2]
 R=src/web/Results.tsx; C=src/web/Chart.tsx; S=src/web/Resample.tsx; D=src/web/dto.ts
 RS=src/web/results-states.test.tsx; SP=src/web/resample-states.test.tsx; DT=src/web/dto.test.ts
 MT=src/web/markout.test.tsx; CT=src/web/chart.test.tsx
+E=src/web/Execute.tsx; ET=src/web/Execute.test.tsx
 
 # --- Results.tsx -------------------------------------------------------------
 probe "$R" "s/badge === 'RUN FAILED'/true/" "$RS" 'the run headline is the badge the run earned, and only a failure is dressed as one'
@@ -109,6 +110,18 @@ probe "$D" "s/result\\.complete \\? 'RUN COMPLETE' : 'PARTIAL RESULT'/result.com
 probe "$D" "s/if \(!ranWith\) return \\[\\];//" "$DT" 'changedLabels names only the watched inputs that moved, in watch-list order'
 probe "$D" 's/\.filter\(key => current\[key\] !== ranWith\[key\]\)/.filter(() => true)/' "$DT" 'changedLabels names only the watched inputs that moved, in watch-list order'
 probe "$D" "s/if \(model\\.fillModel === 'tape'\) return/if (false) return/" "$DT" 'describeModel tells the two fill models apart and admits neither is an execution'
+
+# --- Execute.tsx / dto.ts execution guards -----------------------------------
+# A sent order's receipt must never fabricate an explorer destination: Hideki has no public explorer.
+probe "$E" 's/<code className="lb-account">\{hash\}<\/code>/<a href="https:\/\/explorer.example\/tx\/{hash}"><code className="lb-account">{hash}<\/code><\/a>/' "$ET" 'CANARY: a sent order shows the hash as evidence and renders NO explorer link'
+# The live arm is decided by the operator opting in twice, never by a default that could send.
+probe "$E" 's/const live = capability\.enabled && !capability\.dryRun;/const live = false;/' "$ET" 'a live capability badges LIVE · TESTNET, names the chain and cap, and requires a confirm'
+# A failing pre-trade gate must surface as the binding gate, not be hidden behind a green proposal.
+probe "$E" 's/\{!proposal\.placeable && proposal\.binding &&/{false &&/' "$ET" 'a not-placeable proposal surfaces the binding gate, and an over-cap one says so'
+# A send result without a real transaction hash is not evidence of a send.
+probe "$D" 's/if \(typeof value\.hash !== \x27string\x27 \|\| !txHashHex\.test\(value\.hash\)\) throw new Error\(\x27The send result is missing a valid transaction hash\.\x27\);//' "$ET" 'CANARY: a send result without a valid hash is refused — no evidence, no send'
+# A malformed capability must fail closed (null), not render an order form on a guess.
+probe "$D" 's/if \(!dec\(value\.maxNotional\)\) return null;//' "$ET" 'parseExecutionCapability accepts a config answer and rejects anything malformed'
 
 rm -f "$log"
 echo

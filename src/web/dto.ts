@@ -222,6 +222,96 @@ export function validateResample(value: unknown): ResampleBlock {
   return value as unknown as ResampleBlock;
 }
 
+/**
+ *  The bounded execution path, read from the server that would run it. The capability answer is
+ *  config-only — no network, no key: it says whether this deployment can place an order at all
+ *  (`available`, true only locally) and the operator's opt-in settings. The public deployment
+ *  answers available:false, so the panel renders a read-only note instead of an order form. The
+ *  key itself never appears here; `hasKey` is only whether one is configured.
+ */
+export type ExecutionCapability = {
+  available: boolean;
+  mode: 'local' | 'serverless';
+  enabled: boolean;
+  dryRun: boolean;
+  hasKey: boolean;
+  maxNotional: string;
+};
+
+export function parseExecutionCapability(value: unknown): ExecutionCapability | null {
+  if (!record(value)) return null;
+  if (typeof value.available !== 'boolean' || typeof value.enabled !== 'boolean' || typeof value.dryRun !== 'boolean' || typeof value.hasKey !== 'boolean') return null;
+  if (value.mode !== 'local' && value.mode !== 'serverless') return null;
+  if (!dec(value.maxNotional)) return null;
+  return { available: value.available, mode: value.mode, enabled: value.enabled, dryRun: value.dryRun, hasKey: value.hasKey, maxNotional: value.maxNotional };
+}
+
+/** The capability, or null. A failed read must not leave an order form on screen from a guess. */
+export async function fetchExecution(): Promise<ExecutionCapability | null> {
+  try {
+    const response = await fetch('/api/execution', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return null;
+    return parseExecutionCapability(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+export type ExecuteCheckDTO = { id: string; verdict: 'pass' | 'fail' | 'warn'; detail: string };
+/** The display fields of the order proposal — decimal strings and gate verdicts, never raw units. */
+export type OrderProposalDTO = {
+  symbol: string; quoteSymbol: string; side: 'long' | 'short'; orderType: 'limit' | 'market';
+  size: string; price: string; markPrice: string; notional: string; lock: string; initialMargin: string;
+  liquidationPrice: string | null; cash: string; cap: string;
+  underCap: boolean; placeable: boolean; binding: string | null; aligned: boolean; requestedSize: string;
+  checks: ExecuteCheckDTO[];
+};
+export type ExecuteCallDTO = { to: string; data: string; value: string; description: string };
+export type ExecutePreviewDTO = { action: 'preview'; reason: string; proposal: OrderProposalDTO; calls: ExecuteCallDTO[] };
+export type ExecuteSendDTO = { action: 'send'; proposal: OrderProposalDTO; hash: string; depositHash?: string; orderId?: string };
+export type ExecuteResultDTO = ExecutePreviewDTO | ExecuteSendDTO;
+
+const addressHex = /^0x[0-9a-fA-F]{40}$/;
+const txHashHex = /^0x[0-9a-fA-F]{64}$/;
+const calldataHex = /^0x[0-9a-fA-F]*$/;
+
+function validateOrderProposal(value: unknown): OrderProposalDTO {
+  if (!record(value)) throw new Error('The order result is missing its proposal.');
+  if (typeof value.symbol !== 'string' || typeof value.quoteSymbol !== 'string') throw new Error('The order proposal has invalid market metadata.');
+  if (value.side !== 'long' && value.side !== 'short') throw new Error('The order proposal has an invalid side.');
+  if (value.orderType !== 'limit' && value.orderType !== 'market') throw new Error('The order proposal has an invalid order type.');
+  for (const key of ['size', 'price', 'markPrice', 'notional', 'lock', 'initialMargin', 'cash', 'cap', 'requestedSize'] as const) if (!dec(value[key])) throw new Error('The order proposal contains an invalid amount.');
+  if (value.liquidationPrice !== null && !dec(value.liquidationPrice)) throw new Error('The order proposal contains an invalid liquidation price.');
+  for (const key of ['underCap', 'placeable', 'aligned'] as const) if (typeof value[key] !== 'boolean') throw new Error('The order proposal contains an invalid flag.');
+  if (value.binding !== null && typeof value.binding !== 'string') throw new Error('The order proposal contains an invalid binding gate.');
+  if (!Array.isArray(value.checks)) throw new Error('The order proposal has no gate checks.');
+  for (const c of value.checks as unknown[]) {
+    if (!record(c) || typeof c.id !== 'string' || typeof c.detail !== 'string' || (c.verdict !== 'pass' && c.verdict !== 'fail' && c.verdict !== 'warn')) throw new Error('The order proposal has an invalid gate check.');
+  }
+  return value as unknown as OrderProposalDTO;
+}
+
+/** Validate the place-or-preview response before it enters UI state. A send must carry a real hash. */
+export function validateExecuteResult(value: unknown): ExecuteResultDTO {
+  if (!record(value)) throw new Error('The server returned an unexpected order result.');
+  const proposal = validateOrderProposal(value.proposal);
+  if (value.action === 'preview') {
+    if (typeof value.reason !== 'string') throw new Error('The order preview is missing its reason.');
+    if (!Array.isArray(value.calls)) throw new Error('The order preview has no calldata.');
+    for (const call of value.calls as unknown[]) {
+      if (!record(call) || typeof call.to !== 'string' || !addressHex.test(call.to) || typeof call.data !== 'string' || !calldataHex.test(call.data) || !dec(call.value) || typeof call.description !== 'string') throw new Error('The order preview contains an invalid call.');
+    }
+    return { action: 'preview', reason: value.reason, proposal, calls: value.calls as ExecuteCallDTO[] };
+  }
+  if (value.action === 'send') {
+    if (typeof value.hash !== 'string' || !txHashHex.test(value.hash)) throw new Error('The send result is missing a valid transaction hash.');
+    if (value.depositHash !== undefined && (typeof value.depositHash !== 'string' || !txHashHex.test(value.depositHash))) throw new Error('The send result has an invalid deposit hash.');
+    if (value.orderId !== undefined && !dec(value.orderId)) throw new Error('The send result has an invalid order id.');
+    return { action: 'send', proposal, hash: value.hash, depositHash: value.depositHash as string | undefined, orderId: value.orderId as string | undefined };
+  }
+  throw new Error('The server returned an unknown order action.');
+}
+
 export const date = (t: number) => new Date(t * 1000).toLocaleString(undefined, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' UTC';
 export const day = (t: number) => new Date(t * 1000).toLocaleDateString(undefined, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
 export const amount = (value: unknown) => {
