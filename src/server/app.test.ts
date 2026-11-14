@@ -179,3 +179,65 @@ test("every answer carries the security headers, refusals included", async () =>
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
   assert.match(response.headers.get("content-security-policy") ?? "", /connect-src 'self'/);
 });
+
+test("the execution capability answers from config on both transports and never carries the key", async () => {
+  const port = await localPort();
+  const localResponse = await fetch(`http://127.0.0.1:${port}/api/execution`);
+  assert.equal(localResponse.status, 200);
+  const localText = await localResponse.text();
+  const local = JSON.parse(localText);
+  assert.equal(local.available, true, "the local lab may place an order");
+  assert.equal(local.mode, "local");
+  assert.equal(typeof local.hasKey, "boolean", "hasKey is a boolean, never the key");
+  assert.equal(typeof local.enabled, "boolean");
+  assert.equal(typeof local.dryRun, "boolean");
+  assert.ok(!("privateKey" in local), "the key must never appear in the capability answer");
+  assert.doesNotMatch(localText, /0x[0-9a-fA-F]{64}/, "no 32-byte secret may leak into the capability body");
+
+  const webResponse = await serve(webCtx, new Request(`${DEPLOYMENT_ORIGIN}/api/execution`));
+  assert.equal(webResponse.status, 200);
+  const webText = await webResponse.text();
+  const web = JSON.parse(webText);
+  assert.equal(web.available, false, "a deployment can never place an order");
+  assert.equal(web.mode, "serverless");
+  assert.ok(!("privateKey" in web));
+  assert.doesNotMatch(webText, /0x[0-9a-fA-F]{64}/);
+});
+
+test("the deployment refuses to place an order, before any market read, and says why", async () => {
+  // A well-formed, explicitly confirmed order must STILL be refused on a deployment: the refusal is by
+  // transport mode, not by validation, so no body can talk the public function into sending.
+  const refusal = await serve(webCtx, new Request(`${DEPLOYMENT_ORIGIN}/api/execute`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ market: "BTC", side: "long", size: "0.01", cash: "1000", confirm: true }),
+  }));
+  assert.equal(refusal.status, 501);
+  assert.match(await refusal.text(), /local-only|read-only|no key/);
+});
+
+test("the local execute route refuses malformed requests before any market read", async () => {
+  const port = await localPort();
+  const post = (body: string, headers: Record<string, string> = { "content-type": "application/json" }) =>
+    fetch(`http://127.0.0.1:${port}/api/execute`, { method: "POST", headers, body });
+
+  const crossOrigin = await post("{}", { "content-type": "application/json", origin: "https://evil.example" });
+  assert.equal(crossOrigin.status, 403, "a cross-origin order is refused");
+
+  const notJson = await post("{}", { "content-type": "text/plain" });
+  assert.equal(notJson.status, 415, "a non-JSON order is refused");
+
+  const tooBig = await post(`{"cash":"${"9".repeat(20_000)}"}`);
+  assert.equal(tooBig.status, 413, "an oversized order body is refused while streaming");
+
+  const noSide = await post(JSON.stringify({ size: "0.01", cash: "1000" }));
+  assert.equal(noSide.status, 400, "an order with no side is refused by the parser");
+  assert.match(await noSide.text(), /side/);
+
+  const negCash = await post(JSON.stringify({ side: "long", size: "0.01", cash: "-5" }));
+  assert.equal(negCash.status, 400, "a negative cash is refused by the parser");
+  assert.match(await negCash.text(), /cash/);
+
+  const badConfirm = await post(JSON.stringify({ side: "long", size: "0.01", cash: "1000", confirm: "true" }));
+  assert.equal(badConfirm.status, 400, "a truthy-string confirm is refused — it must be a real boolean");
+});

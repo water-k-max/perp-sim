@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
+import { perpMarkForPnl } from "@somnia-chain/markets-sdk";
 import { BacktestInputError, BacktestStorageError, listMarkets, parseRunRequest, runRequest } from "../backtest-api.js";
-import { chainReport, createClient } from "../client.js";
+import { chainReport, collateralAddress, createClient } from "../client.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { loadMarketData } from "../data/ingest.js";
 import { onceLive } from "../data/live-cache.js";
@@ -14,6 +15,11 @@ import { resampleAccount } from "../resample/account.js";
 import { parseResampleRequest } from "../resample/analysis.js";
 import { parseImport, type ParsedImport } from "../resample/import.js";
 import { runImportFlow } from "../resample/import-flow.js";
+import { config } from "../config.js";
+import { executeOrder, type ExecuteInput } from "../execute/executor.js";
+import { ExecutionRefused } from "../execute/policy.js";
+import { parseExecuteRequest, type ExecuteRequest } from "../execute/request.js";
+import { retryRead } from "../retry.js";
 import { toRaw } from "../units.js";
 import {
   BodyTooLarge,
@@ -191,9 +197,92 @@ export async function handle(ctx: RouteContext, req: RequestLike, res: ResponseL
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/execute") {
+    // A deployment can never place an order: it holds no key, and the policy kernel refuses by
+    // transport mode regardless of settings. Answer 501 before any origin, body or network work, so
+    // the refusal is a stated policy rather than something the caller discovers by trial — the same
+    // reason the run-store routes refuse on a deployment.
+    if (!local) {
+      json(res, 501, { error: "Placing an order is local-only. The public deployment is read-only and holds no key; run the lab locally to place a testnet order." });
+      return;
+    }
+    if (!sameOrigin(req)) { json(res, 403, { error: "Cross-origin requests are not allowed." }); return; }
+    if (!firstHeader(req, "content-type")?.startsWith("application/json")) { json(res, 415, { error: "Send JSON configuration." }); return; }
+    let body: unknown;
+    try { body = await readJson(req, 8192); }
+    catch (error) {
+      json(res, error instanceof BodyTooLarge ? 413 : 400, { error: error instanceof BodyTooLarge ? "Configuration is too large." : "Could not read request." });
+      return;
+    }
+    // Parsed before the lane is asked for, for the same reason the backtest body is: an order that can
+    // never run is answered with its own 400 rather than spending a slot and a queue place on it. The
+    // key is the parsed request, so two callers whose JSON differs only in key order share one run.
+    let parsed: ExecuteRequest;
+    try { parsed = parseExecuteRequest(body); }
+    catch (error) { json(res, 400, { error: error instanceof Error ? error.message : "Invalid order." }); return; }
+    await viaLane(ctx, res, laneKey("execute", parsed), async () => {
+      try {
+        const client = createClient().client;
+        const collateral = collateralAddress;
+        if (collateral === undefined) return { status: 503, body: { error: "No collateral address is configured for this chain; cannot place an order." } };
+        const selected = selectMarket(await onceLive("perp-markets", () => listPerps(client)), parsed.market);
+        const cfg = await onceLive(`perp-config:${selected.poolAddress}`, () => resolveConfig(client, selected));
+        // State is read fresh, not cached: an order must be priced against the current mark, not a
+        // stale one. retryRead rides out the Hideki RPC's transient genesis-check drops.
+        const state = await retryRead("getPerpState", () => client.getPerpState(cfg.pool as `0x${string}`));
+        const mark = perpMarkForPnl(state);
+        const input: ExecuteInput = {
+          cfg,
+          req: parsed.order,
+          state: { markPrice: mark.price, openInterest: state.openInterest },
+          mode: "local",
+          confirm: parsed.confirm,
+          enabled: config.execution.enabled,
+          dryRun: config.execution.dryRun,
+          privateKey: config.execution.privateKey,
+          capDecimal: config.execution.maxNotional,
+          collateral,
+          deposit: parsed.deposit,
+        };
+        // The writer is built only on the live arm inside executeOrder; a dry-run never constructs a
+        // signer. `json` serialises the proposal's bigints to decimal strings at the edge.
+        const result = await executeOrder(input, { createWriter: (privateKey) => client.createTrader({ privateKey }) });
+        return { status: 200, body: result };
+      } catch (error) {
+        // A policy refusal is a deliberate "the kernel will not send this", distinct from a malformed
+        // order (400) and from an unavailable venue (422). The dry-run arm never reaches here: it
+        // previews even an over-cap or unplaceable order so the proposal can show the failing gate.
+        if (error instanceof ExecutionRefused) return { status: 403, body: { error: error.message } };
+        const message = error instanceof Error ? error.message : "Execution failed.";
+        if (/no perp market matching|has no baseDecimals|below one lot|must be a positive|aligns to zero|too small for this market/.test(message)) {
+          return { status: 400, body: { error: message } };
+        }
+        console.error("Execute failed:", message);
+        return { status: 422, body: { error: "Order execution failed. The market read or the venue may be unavailable; retry." } };
+      }
+    });
+    return;
+  }
+
   // Which network this process reads, from the module that builds the client rather than from a
   // string in a component. No lane and no network: it answers from this process's own config.
   if (req.method === "GET" && url.pathname === "/api/chain") { json(res, 200, chainReport()); return; }
+
+  // What this process may do about execution, from its own config — no lane and no network, like
+  // /api/chain. `available` is the transport fact (a deployment can never send); `hasKey` is a boolean
+  // and the key itself is never serialised. The panel renders only when available, and shows DRY RUN
+  // unless the operator has opted in twice (EXECUTION_ENABLED and DRY_RUN=false).
+  if (req.method === "GET" && url.pathname === "/api/execution") {
+    json(res, 200, {
+      available: local,
+      mode: ctx.deployment.mode,
+      enabled: config.execution.enabled,
+      dryRun: config.execution.dryRun,
+      hasKey: config.execution.privateKey !== undefined,
+      maxNotional: config.execution.maxNotional,
+    });
+    return;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/markets") {
     try { json(res, 200, await listMarkets()); }
