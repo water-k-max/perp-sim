@@ -14,12 +14,23 @@ consistent with that doc and update it when behaviour changes.
 
 ## Non-negotiable constraints
 
-1. **Read-only.** No signer, no keys, no transactions, no wallet connection. The local server
-   binds loopback and serves only frontend assets plus the read-only API. Never weaken this.
-   A deployment (2026-11-10, `docs/deployment-vercel.md`) does not weaken it either: it runs the
-   same route table, reads the same indexer, and holds no credential — but it does change *who can
-   ask the tool to work*, which is why the loopback host rule becomes "answer your own host and
-   refuse everything else" there rather than disappearing.
+1. **Read-only by default; one bounded, local-only execution path (2026-11-14, owner-authorized).**
+   The research lenses — discover, verify, mirror, simulate — never sign, never send, and never need
+   a key or a wallet connection. The local server binds loopback and serves the frontend plus the
+   read-only API. A deployment (2026-11-10, `docs/deployment-vercel.md`) runs the same route table,
+   reads the same indexer, and holds no credential — but it does change *who can ask the tool to
+   work*, which is why the loopback host rule becomes "answer your own host and refuse everything
+   else" there rather than disappearing.
+   The exception, added to satisfy the hackathon's "places real perps orders on Somnia Tokyo
+   testnet" requirement, is `src/execute/*` + `POST /api/execute`: it can place ONE real perp order
+   on Hideki testnet (50383), bounded by construction. The route table refuses it on any deployment
+   (501, no key held); it is off by default (`EXECUTION_ENABLED=false`), preview-only by default
+   (`DRY_RUN=true`), and capped per order (`EXECUTION_MAX_NOTIONAL`). A live send needs ALL of:
+   local transport + enabled + `DRY_RUN=false` + an explicit per-request confirm + a configured key
+   + an under-cap, placeable pre-trade verdict. The key comes from a gitignored `.env`, is never
+   logged, serialised into a response, committed, or sent to a deployment. See `docs/execution.md`.
+   This does not weaken the read-only research path or the public deployment; do not extend
+   execution beyond these bounds without a new owner authorization.
 2. **Exact money.** bigint internally, decimal strings at the API edge. Path equity is an
    integer-unit accumulation of exact trade PnLs; only percentile interpolation is float,
    and it happens on decimals at the edge.
@@ -29,6 +40,9 @@ consistent with that doc and update it when behaviour changes.
    anywhere in the resample path, pinned by a test.
 4. **No new runtime dependencies** without justification in this file. Charts stay in the
    existing hand-rolled SVG component (`src/web/Chart.tsx`). No Plotly, no chart libs.
+   The execution path (2026-11-14) adds none: it writes through the venue SDK's own
+   `createTrader` / `placePerpOrder` / `depositMargin`, and encodes the dry-run calldata with the
+   SDK's exported ABIs plus `viem` — both already dependencies.
 5. **Tests alongside code.** Every module gets `node:test` coverage; every new invariant
    gets a canary that must fail when the thing it checks is broken.
 6. **No look-ahead** in resampling either: held-back trades never influence fit-half
@@ -51,6 +65,7 @@ consistent with that doc and update it when behaviour changes.
 | HTTP API helpers, lanes, work budget | `src/bin/http-kit.ts`, `src/bin/work-lanes.ts`, `src/backtest-api.ts` |
 | Live market/config reads and their opt-in TTL | `src/history/market.ts`, `src/data/live-cache.ts`, `PERP_SIM_LIVE_CACHE_SEC` |
 | CLI | `src/bin/backtest.ts` |
+| Bounded execution (local-only) | `src/execute/*`, `src/bin/execute.ts`, `POST /api/execute`, `GET /api/execution` |
 
 ## Phase plan
 
@@ -138,7 +153,7 @@ pnpm gate
 
 `gate` is `pnpm typecheck`, then every suite — `test:units`, `test:engine`, `test:data`,
 `test:analytics`, `test:resample`, `test:calibration`, `test:verify`, `test:runs`, `test:web`,
-`test:server` — then `build:site` (which is `build:web` plus staging the static directory a
+`test:server`, `test:execute` — then `build:site` (which is `build:web` plus staging the static directory a
 deployment serves, with every staged file checked against its source size). It is offline:
 `src/config.ts` ships Hideki defaults, and the suites reach only a `t.mock`'d fetch or a loopback
 server they spawn themselves. A gate that needs the venue is a gate that goes red when the venue
