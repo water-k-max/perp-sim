@@ -54,6 +54,7 @@ serialised into a response, never committed. `.env` and `.env.*` are gitignored;
 | `src/server/app.ts` | `GET /api/execution` (config-only capability) and `POST /api/execute` (local-only) |
 | `src/bin/execute.ts` | CLI: `pnpm execute … [--live --confirm]` |
 | `src/web/Execute.tsx` | the local-only panel; the public deployment renders a read-only note instead |
+| `src/explorer.ts` | the one verified explorer host (Somnia Tokyo = Hideki, chain 50383); builds every tx/address evidence link the CLI and UI render, so a destination can never be fabricated |
 
 **Exact money.** bigint internally, decimal strings at the edge. The `json` helper serialises bigints
 to strings, so the proposal and calldata cross the API without a custom serializer. Size is aligned
@@ -100,9 +101,11 @@ and the live order, so the two cannot drift.
    and requires the confirm checkbox before a live send. A live order consumes its confirmation — the
    next send needs a fresh tick.
 5. **Verify the evidence.** A live send prints the transaction hash (and the deposit hash and order id
-   when present). **There is no public block explorer for Hideki.** Verify with
-   `eth_getTransactionReceipt` against the testnet RPC (`https://api.hideki2.infra.testnet.somnia.network`),
-   not an explorer link. The UI and CLI never render a fabricated explorer URL.
+   when present) and links each to the real **Somnia Tokyo explorer** — Hideki is the Tokyo testnet
+   (chain 50383), `https://explorer.testnet.somnia.network/tokyo`. The UI receipt and the CLI build
+   every link from the one verified host in `src/explorer.ts`; a link to any other host fails the
+   render guard. You can also verify keylessly with `eth_getTransactionReceipt` against the testnet
+   RPC (`https://api.hideki2.infra.testnet.somnia.network`).
 
 ## First live placement (evidence)
 
@@ -123,7 +126,11 @@ end to end through the bounded path above (local CLI, `EXECUTION_ENABLED=true`, 
 - **Order id:** `21564243822166477948182`. The placement receipt carries the pool's `OrderPlaced` event (`isBid=1`, `quantity=100000` raw = 0.001 BTC at 8dp, owner = trader) and the bank's collateral-lock event for `1676575000000000000` raw = 1.676575 USDso.
 - **Resulting margin account** (read back from the bank after the send): wallet **400 USDso** (500 − 100 deposited), bank **unlocked 98.323425**, **locked 1.676575**, collateral basis **100**, `activePerpPools = [0x4181dd08…94c0]` — the account now holds a live BTC perp position.
 
-**Re-verify** (no explorer exists for Hideki): `eth_getTransactionReceipt` for each hash against
+**Re-verify** on the explorer (Hideki = Tokyo): the order tx
+[`0xfec34e…648d`](https://explorer.testnet.somnia.network/tokyo/tx/0xfec34e97ff08727d303ecd852dd367b22b0a6fa4f3dca19ac653a6eecfe5648d)
+and the deposit tx
+[`0xff8c…20d1`](https://explorer.testnet.somnia.network/tokyo/tx/0xff8c2cbba1d8ad238408059d380a3695ba948278636f0b209c68fc65122920d1).
+Keylessly, `eth_getTransactionReceipt` for each hash against
 `https://api.hideki2.infra.testnet.somnia.network` returns `status: "0x1"` with the events above.
 
 **Honest scope.** This is a *placed* limit order resting at the mark-aligned price — placement is what
@@ -139,7 +146,7 @@ asserted.
   deployment's `501` refusal before any market read, and the local route's malformed-request refusals.
 - `pnpm test:web` covers the panel's render guards and the DTO validators.
 - `pnpm test:guards` injects the exact bug each execution guard claims to catch and requires the named
-  test to go red: a fabricated explorer link, a send without a valid hash, a live arm that ignores the
+  test to go red: a link to a fabricated explorer host, a send without a valid hash, a live arm that ignores the
   opt-in, a hidden binding gate, and a capability that fails open.
 
 All of these are offline (mocked fetch / injected writer); none sends a transaction or needs a key.

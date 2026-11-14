@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { amount, changedLabels, fetchMarkets, record, validateExecuteResult, type ExecuteCallDTO, type ExecuteCheckDTO, type ExecuteResultDTO, type ExecutionCapability, type Market, type OrderProposalDTO } from './dto.js';
 import { Stat, StaleNote } from './Resample.js';
+import { explorerTxUrl } from '../explorer.js';
 
 /** The body the panel posts for these form values, and the labels an edit is reported under. */
 const inputsOf = (market: string, side: string, orderType: string, size: string, price: string, cash: string, deposit: string) => ({
@@ -204,16 +205,18 @@ function PreviewCalls({ calls }: { calls: ExecuteCallDTO[] }) {
 }
 
 /**
- *  The receipt for a sent order. The hash is the evidence — there is no public block explorer for
- *  Hideki, so this never renders an explorer link, only the hash and how to verify it against the RPC.
+ *  The receipt for a sent order. The hash is the evidence, and Hideki (the Tokyo testnet, chain 50383)
+ *  has a real public explorer, so each hash links to its verified page. The URL is built from the one
+ *  explorer host in ../explorer.js — the render guard pins that host, so a fabricated destination fails
+ *  the canary. The keyless RPC check is still named for anyone verifying without a browser.
  */
 function SendReceipt({ hash, depositHash, orderId }: { hash: string; depositHash?: string; orderId?: string }) {
   return <div className="exec-receipt integrity-note integrity-ok" role="status">
     <h3>Order sent on testnet</h3>
     <p className="muted">Transaction hash</p>
-    <code className="lb-account">{hash}</code>
-    {depositHash && <><p className="muted">Margin deposit hash</p><code className="lb-account">{depositHash}</code></>}
+    <a href={explorerTxUrl(hash)} target="_blank" rel="noreferrer noopener"><code className="lb-account">{hash}</code></a>
+    {depositHash && <><p className="muted">Margin deposit hash</p><a href={explorerTxUrl(depositHash)} target="_blank" rel="noreferrer noopener"><code className="lb-account">{depositHash}</code></a></>}
     {orderId !== undefined && <p className="muted">Order id <code>{orderId}</code></p>}
-    <p className="muted">No public block explorer exists for Somnia Hideki. Verify this hash with <code>eth_getTransactionReceipt</code> against the testnet RPC.</p>
+    <p className="muted">Linked to the Somnia Tokyo explorer (Hideki = Tokyo). Verify keylessly with <code>eth_getTransactionReceipt</code> against the testnet RPC.</p>
   </div>;
 }

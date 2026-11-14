@@ -8,8 +8,8 @@ import { parseExecutionCapability, validateExecuteResult, type ExecuteResultDTO,
  *  The bounded execution lens, rendered. Its job is honesty about a real-money path: the public
  *  deployment must say it is read-only and keyless (never a form), a dry-run must badge itself DRY RUN
  *  and offer only a preview, a live send must require an explicit confirm and a key, and a sent order's
- *  receipt must carry the transaction hash as evidence with NO explorer link — Hideki has no public
- *  explorer, so a clickable "view on explorer" would be a fabricated destination. Fixtures are test
+ *  receipt must carry the transaction hash as evidence and link it to the REAL Somnia Tokyo explorer
+ *  (Hideki = Tokyo) — a link to any other host would be a fabricated destination. Fixtures are test
  *  data, not live figures or real hashes.
  */
 const ADDR = `0x${"1".repeat(40)}`;
@@ -79,16 +79,16 @@ test("the preview renders the reason, the proposal money and the calldata, with 
   assert.ok(!m.includes(HASH), "a preview carries no transaction hash");
 });
 
-test("CANARY: a sent order shows the hash as evidence and renders NO explorer link", () => {
+test("CANARY: a sent order links its hash to the real Somnia Tokyo explorer, never a fabricated host", () => {
   const m = renderToStaticMarkup(<OrderResult result={send()} />);
   assert.ok(m.includes("Order sent on testnet"), "it is labelled a send");
   assert.ok(m.includes(HASH), "the transaction hash is the evidence");
   assert.ok(m.includes(DEPOSIT_HASH), "the deposit hash is shown when present");
   assert.ok(m.includes("42"), "the order id is shown");
-  assert.ok(m.includes("No public block explorer exists"), "it states there is no explorer");
-  assert.ok(m.includes("eth_getTransactionReceipt"), "it says how to verify against the RPC");
-  assert.ok(!m.includes("href"), "no clickable explorer link is fabricated");
-  assert.ok(!m.includes("https://"), "no explorer URL is invented");
+  assert.ok(m.includes(`https://explorer.testnet.somnia.network/tokyo/tx/${HASH}`), "the tx hash links to the real Somnia Tokyo explorer");
+  assert.ok(m.includes(`https://explorer.testnet.somnia.network/tokyo/tx/${DEPOSIT_HASH}`), "the deposit hash links to the real explorer too");
+  assert.ok(m.includes("eth_getTransactionReceipt"), "it still names the keyless RPC verification");
+  assert.ok(!m.includes("explorer.example"), "no fabricated explorer host is rendered");
 });
 
 test("a not-placeable proposal surfaces the binding gate, and an over-cap one says so", () => {

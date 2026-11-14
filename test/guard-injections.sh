@@ -112,8 +112,9 @@ probe "$D" 's/\.filter\(key => current\[key\] !== ranWith\[key\]\)/.filter(() =>
 probe "$D" "s/if \(model\\.fillModel === 'tape'\) return/if (false) return/" "$DT" 'describeModel tells the two fill models apart and admits neither is an execution'
 
 # --- Execute.tsx / dto.ts execution guards -----------------------------------
-# A sent order's receipt must never fabricate an explorer destination: Hideki has no public explorer.
-probe "$E" 's/<code className="lb-account">\{hash\}<\/code>/<a href="https:\/\/explorer.example\/tx\/{hash}"><code className="lb-account">{hash}<\/code><\/a>/' "$ET" 'CANARY: a sent order shows the hash as evidence and renders NO explorer link'
+# A sent order's receipt must link to the REAL Somnia Tokyo explorer (Hideki = Tokyo), never a
+# fabricated host: swap the verified explorer helper for an explorer.example destination.
+probe "$E" 's/href=\{explorerTxUrl\(hash\)\}/href={"https:\/\/explorer.example\/tx\/" + hash}/' "$ET" 'CANARY: a sent order links its hash to the real Somnia Tokyo explorer, never a fabricated host'
 # The live arm is decided by the operator opting in twice, never by a default that could send.
 probe "$E" 's/const live = capability\.enabled && !capability\.dryRun;/const live = false;/' "$ET" 'a live capability badges LIVE · TESTNET, names the chain and cap, and requires a confirm'
 # A failing pre-trade gate must surface as the binding gate, not be hidden behind a green proposal.

@@ -3,6 +3,7 @@ import { chain, createClient } from "../client.js";
 import { config } from "../config.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { resolveBankCollateral } from "../execute/collateral.js";
+import { explorerTxUrl } from "../explorer.js";
 import { executeOrder, type ExecuteInput } from "../execute/executor.js";
 import { ExecutionRefused } from "../execute/policy.js";
 import type { OrderRequest } from "../execute/proposal.js";
@@ -18,8 +19,9 @@ import { retryRead } from "../retry.js";
  *  (EXECUTION_ENABLED=true, DRY_RUN=false), funds the wallet, and passes --live --confirm here. The
  *  public deployment can never reach this path: it is local-only and the route table refuses it.
  *
- *  There is no public block explorer for Hideki, so a live send prints the transaction hash as the
- *  evidence; verify it with eth_getTransactionReceipt against the RPC rather than an explorer link.
+ *  A live send prints the transaction hash and its page on the real Somnia Tokyo explorer
+ *  (https://explorer.testnet.somnia.network/tokyo — Hideki is the Tokyo testnet, chain 50383). The hash
+ *  can also be verified keylessly with eth_getTransactionReceipt against the RPC.
  */
 
 const arg = (name: string, fallback?: string): string | undefined => {
@@ -102,8 +104,12 @@ if (result.action === "preview") {
 }
 
 console.log("\nSENT one testnet order.");
-if (result.depositHash) console.log(`  deposit tx ${result.depositHash}`);
+if (result.depositHash) {
+  console.log(`  deposit tx ${result.depositHash}`);
+  console.log(`             ${explorerTxUrl(result.depositHash)}`);
+}
 console.log(`  order tx   ${result.hash}`);
+console.log(`             ${explorerTxUrl(result.hash)}`);
 if (result.orderId !== undefined) console.log(`  order id   ${result.orderId}`);
-console.log("  No public explorer exists for Hideki; verify with eth_getTransactionReceipt against the RPC.");
+console.log("  Explorer: Somnia Tokyo (Hideki = Tokyo, chain 50383). Or verify keylessly with eth_getTransactionReceipt against the RPC.");
 process.exit(0);
