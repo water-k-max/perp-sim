@@ -20,6 +20,7 @@
     "probe:markets": "tsx src/bin/probe-markets.ts",
     "backtest": "tsx src/bin/backtest.ts",
     "preflight": "tsx src/bin/preflight.ts",
+    "execute": "tsx src/bin/execute.ts",
     "validate": "tsx src/bin/validate.ts",
     "replay-account": "tsx src/bin/replay-account.ts",
     "replay-run": "tsx src/bin/replay-run.ts",
