@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { perpMarkForPnl } from "@somnia-chain/markets-sdk";
 import { BacktestInputError, BacktestStorageError, listMarkets, parseRunRequest, runRequest } from "../backtest-api.js";
-import { chainReport, collateralAddress, createClient } from "../client.js";
+import { chainReport, createClient } from "../client.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
 import { loadMarketData } from "../data/ingest.js";
 import { onceLive } from "../data/live-cache.js";
@@ -16,6 +16,7 @@ import { parseResampleRequest } from "../resample/analysis.js";
 import { parseImport, type ParsedImport } from "../resample/import.js";
 import { runImportFlow } from "../resample/import-flow.js";
 import { config } from "../config.js";
+import { resolveBankCollateral } from "../execute/collateral.js";
 import { executeOrder, type ExecuteInput } from "../execute/executor.js";
 import { ExecutionRefused } from "../execute/policy.js";
 import { parseExecuteRequest, type ExecuteRequest } from "../execute/request.js";
@@ -223,10 +224,12 @@ export async function handle(ctx: RouteContext, req: RequestLike, res: ResponseL
     await viaLane(ctx, res, laneKey("execute", parsed), async () => {
       try {
         const client = createClient().client;
-        const collateral = collateralAddress;
-        if (collateral === undefined) return { status: 503, body: { error: "No collateral address is configured for this chain; cannot place an order." } };
         const selected = selectMarket(await onceLive("perp-markets", () => listPerps(client)), parsed.market);
         const cfg = await onceLive(`perp-config:${selected.poolAddress}`, () => resolveConfig(client, selected));
+        // The bank's authoritative collateral token, not the SDK's deployment constant (stale tUSDC
+        // on Hideki). Cached per bank like the config: it is a bank constant, and the preview's
+        // approve must name the same USDso the live writer resolves through getSystemConfig.
+        const collateral = await onceLive(`perp-collateral:${cfg.marginBank}`, () => resolveBankCollateral(client, cfg.marginBank as `0x${string}`));
         // State is read fresh, not cached: an order must be priced against the current mark, not a
         // stale one. retryRead rides out the Hideki RPC's transient genesis-check drops.
         const state = await retryRead("getPerpState", () => client.getPerpState(cfg.pool as `0x${string}`));

@@ -48,6 +48,7 @@ serialised into a response, never committed. `.env` and `.env.*` are gitignored;
 | `src/execute/policy.ts` | pure send/preview/refuse kernel; `ExecutionRefused` carries a stated reason |
 | `src/execute/proposal.ts` | turns a human order into an intent, aligns size **down** to the lot grid and price to the tick grid, prices it with `staticGates`/`lockFor` (no new arithmetic); carries exact raw bigints + decimal strings |
 | `src/execute/calldata.ts` | encodes the exact bytes a live placement would broadcast, with the SDK's exported ABIs + `viem`; no signer, no network |
+| `src/execute/collateral.ts` | reads the MarginBank's authoritative collateral token (`getPerpSystemConfig`) so the preview's approve names the same token the live writer resolves; the SDK's deployment-address constant is stale on Hideki (tUSDC 6dp vs the USDso 18dp the bank pulls) |
 | `src/execute/executor.ts` | the one place an order is previewed or sent; injects the writer (`createTrader`) and builds it **only** on the live arm |
 | `src/execute/request.ts` | HTTP-edge DTO parser; validates types/ranges/decimals before any lane or network |
 | `src/server/app.ts` | `GET /api/execution` (config-only capability) and `POST /api/execute` (local-only) |
@@ -102,6 +103,33 @@ and the live order, so the two cannot drift.
    when present). **There is no public block explorer for Hideki.** Verify with
    `eth_getTransactionReceipt` against the testnet RPC (`https://api.hideki2.infra.testnet.somnia.network`),
    not an explorer link. The UI and CLI never render a fabricated explorer URL.
+
+## First live placement (evidence)
+
+On **2026-11-14** the lab placed one real perp order on Somnia Hideki/Tokyo testnet (chain **50383**),
+end to end through the bounded path above (local CLI, `EXECUTION_ENABLED=true`, `DRY_RUN=false`,
+`--live --confirm`, notional under the `100` cap). This is the evidence for MVP requirement (a).
+
+- **Market:** BTC/USDso, pool `0x4181dd08e73bbcdd1ba3e615a18f6abd941b94c0`, MarginBank `0x478769e1177c0773c43a593dccc4ad15f15f1394`.
+- **Trader:** `0xc89f615F49427FF8Bc6bf6dd0aB127097AEc4483` (the operator's funded testnet wallet; the key never leaves the local process).
+- **Order:** long **0.001 BTC**, limit at the mark-aligned price **67063.0 USDso**, notional **67.063 USDso**, initial-margin lock **1.676575 USDso**. All seven pre-trade gates passed; `under cap = true`, `PLACEABLE`.
+- **Funding:** 100 USDso approved + deposited into the MarginBank first (the bank's authoritative collateral token is USDso `0xed7993A74dAe1e6656B704A424DcD8711aAf4F72`, 18dp — read via `getPerpSystemConfig`, not the stale deployment constant).
+
+| step | transaction | block | status |
+| --- | --- | --- | --- |
+| approve + deposit 100 USDso | `0xff8c2cbba1d8ad238408059d380a3695ba948278636f0b209c68fc65122920d1` | `0x2fbd9bf` | `0x1` (success) |
+| placeOrder (long 0.001 BTC) | `0xfec34e97ff08727d303ecd852dd367b22b0a6fa4f3dca19ac653a6eecfe5648d` | `0x2fbd9c6` | `0x1` (success) |
+
+- **Order id:** `21564243822166477948182`. The placement receipt carries the pool's `OrderPlaced` event (`isBid=1`, `quantity=100000` raw = 0.001 BTC at 8dp, owner = trader) and the bank's collateral-lock event for `1676575000000000000` raw = 1.676575 USDso.
+- **Resulting margin account** (read back from the bank after the send): wallet **400 USDso** (500 − 100 deposited), bank **unlocked 98.323425**, **locked 1.676575**, collateral basis **100**, `activePerpPools = [0x4181dd08…94c0]` — the account now holds a live BTC perp position.
+
+**Re-verify** (no explorer exists for Hideki): `eth_getTransactionReceipt` for each hash against
+`https://api.hideki2.infra.testnet.somnia.network` returns `status: "0x1"` with the events above.
+
+**Honest scope.** This is a *placed* limit order resting at the mark-aligned price — placement is what
+requirement (a) asks for. The placement tx carries no fill event; whether the order matches is the
+venue's book, not a claim made here. It is testnet only, one order, no strategy loop, and no profit is
+asserted.
 
 ## Testing
 

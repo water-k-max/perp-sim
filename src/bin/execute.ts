@@ -1,7 +1,8 @@
 import { perpMarkForPnl } from "@somnia-chain/markets-sdk";
-import { chain, collateralAddress, createClient } from "../client.js";
+import { chain, createClient } from "../client.js";
 import { config } from "../config.js";
 import { listPerps, resolveConfig, selectMarket } from "../history/market.js";
+import { resolveBankCollateral } from "../execute/collateral.js";
 import { executeOrder, type ExecuteInput } from "../execute/executor.js";
 import { ExecutionRefused } from "../execute/policy.js";
 import type { OrderRequest } from "../execute/proposal.js";
@@ -39,12 +40,11 @@ const confirm = hasFlag("confirm");
 
 const exchange = createClient();
 const client = exchange.client;
-const collateral = collateralAddress;
-if (collateral === undefined) {
-  console.error("No collateral address is configured for this chain; cannot encode the margin deposit.");
-  process.exit(1);
-}
 const cfg = await resolveConfig(client, selectMarket(await listPerps(client), symbol));
+// The bank names its own collateral token; the SDK's deployment-address constant is stale on Hideki
+// (tUSDC 6dp vs the USDso 18dp the bank actually pulls). Read it so the preview's approve names the
+// same token the live writer resolves through getSystemConfig.
+const collateral = await resolveBankCollateral(client, cfg.marginBank as `0x${string}`);
 const state = await retryRead("getPerpState", () => client.getPerpState(cfg.pool as `0x${string}`));
 const mark = perpMarkForPnl(state);
 

@@ -16,7 +16,11 @@ export function createClient(): SomniaMarkets {
 }
 
 export const chainId = chain.id;
-export const collateralAddress = SOMNIA_HIDEKI_TESTNET_ADDRESSES.collateral;
+
+// No collateral-address constant is exported: SOMNIA_HIDEKI_TESTNET_ADDRESSES.collateral names a
+// stale tUSDC (6dp) on Hideki, while the MarginBank actually pulls USDso (18dp). Execution reads the
+// bank's authoritative token via getPerpSystemConfig (see execute/collateral.ts), so the preview's
+// approve and the live deposit cannot name different tokens.
 
 /**
  *  What this process is actually reading, in the words the interface has to show.

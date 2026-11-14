@@ -83,7 +83,7 @@ The execution path places **one real perp order on Somnia Hideki testnet (50383)
    pnpm execute --market BTC --side long --size 0.01 --cash 1000 --live --confirm   # sends one order
    ```
    Or use the local web panel (`pnpm dev`): it shows the proposal and calldata, badges **DRY RUN** or **LIVE · TESTNET**, and requires the confirm checkbox before a live send.
-3. **Evidence.** A live send prints the transaction hash. **There is no public block explorer for Hideki** — verify the hash with `eth_getTransactionReceipt` against the testnet RPC, not an explorer link.
+3. **Evidence.** A live send prints the transaction hash. **There is no public block explorer for Hideki** — verify the hash with `eth_getTransactionReceipt` against the testnet RPC, not an explorer link. The first live placement (2026-11-14, a long 0.001 BTC limit order) is recorded with its deposit/order hashes, blocks, order id and resulting margin state in [`docs/execution.md`](docs/execution.md#first-live-placement-evidence).
 
 Full detail: [`docs/execution.md`](docs/execution.md).
 
